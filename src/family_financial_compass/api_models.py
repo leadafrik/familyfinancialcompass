@@ -58,6 +58,14 @@ class AnalysisEnvelope(BaseModel):
     analysis: dict[str, Any]
 
 
+class ReportEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_version: str
+    disclaimer: str
+    report: dict[str, Any]
+
+
 class ScenarioEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

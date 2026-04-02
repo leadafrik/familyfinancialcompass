@@ -163,6 +163,7 @@ def build_default_audit_trail() -> list[AssumptionAuditItem]:
             last_updated=DEFAULT_REFERENCE_DATES.inflation_date,
         ),
         AssumptionAuditItem(
+            name="Buyer closing costs",
             parameter="buyer_closing_cost_rate",
             value=0.03,
             source="CFPB: What are mortgage closing costs? (2024)",

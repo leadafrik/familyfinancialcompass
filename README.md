@@ -54,6 +54,7 @@ Endpoints:
 - `GET /readyz`
 - `GET /livez`
 - `POST /v1/rent-vs-buy/analyze`
+- `POST /v1/rent-vs-buy/report`
 - `POST /v1/rent-vs-buy/scenarios`
 - `GET /v1/scenarios/{scenario_id}`
  - `GET /v1/users/{user_id}/scenarios`
@@ -72,6 +73,9 @@ Environment variables:
 - `FFC_ASSUMPTIONS_PATH`: path to assumptions JSON, default `config/system_assumptions.json`
 - `FFC_DEFAULT_USER_ID`: fallback scenario owner, default `anonymous`
 - `FFC_ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS
+- `GROQ_API_KEY`: optional Groq API key for report narrative generation
+- `GROQ_MODEL`: optional Groq model name, default `openai/gpt-oss-20b`
+- `GROQ_API_BASE_URL`: optional Groq OpenAI-compatible endpoint override
 
 The app loads values from a root-level `.env` file automatically. Edit [`.env`](C:/Users/gordo/Economics%20Decisions%20Engine/.env) and set:
 
@@ -96,6 +100,8 @@ npm run dev
 ```
 
 The Vite dev server proxies `/api` to the deployed Cloud Run backend by default. To point the UI at a different API base, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_BASE_URL`.
+
+The rent-vs-buy UI now supports on-demand PDF generation. The browser requests a report payload from `POST /v1/rent-vs-buy/report` and renders the PDF locally with React-PDF. If `GROQ_API_KEY` is configured on the backend, the short narrative sections are generated through Groq; otherwise the app falls back to deterministic template text.
 
 Current product shape:
 

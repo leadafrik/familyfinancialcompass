@@ -9,6 +9,7 @@ from .api_models import (
     AnalyzeRequest,
     CreateScenarioRequest,
     HealthEnvelope,
+    ReportEnvelope,
     ScenarioEnvelope,
     ScenarioListEnvelope,
 )
@@ -39,6 +40,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         repository=repository,
         audit_trail=assumption_bundle.audit_trail,
         default_user_id=app_settings.default_user_id,
+        groq_api_key=app_settings.groq_api_key,
+        groq_model=app_settings.groq_model,
+        groq_base_url=app_settings.groq_base_url,
     )
 
     app = FastAPI(
@@ -94,6 +98,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             seed=request.simulation_seed,
         )
         return AnalysisEnvelope(**payload)
+
+    @app.post("/v1/rent-vs-buy/report", response_model=ReportEnvelope)
+    async def report_rent_vs_buy(request: AnalyzeRequest) -> ReportEnvelope:
+        payload = service.build_rent_vs_buy_report_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
+        )
+        return ReportEnvelope(**payload)
 
     @app.post("/v1/rent-vs-buy/scenarios", response_model=ScenarioEnvelope)
     async def create_rent_vs_buy_scenario(request: CreateScenarioRequest) -> ScenarioEnvelope:

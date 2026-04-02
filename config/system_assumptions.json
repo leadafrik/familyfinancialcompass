@@ -73,6 +73,7 @@
       "last_updated": "2026-03-12"
     },
     {
+      "name": "Buyer closing costs",
       "parameter": "buyer_closing_cost_rate",
       "value": 0.03,
       "source": "CFPB closing cost estimates 2024",

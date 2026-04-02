@@ -184,3 +184,110 @@ def test_file_repository_list_for_user_is_cursor_paginated() -> None:
 
     assert len(second_page.items) >= 1
     assert len(second_page.items) <= 2
+
+
+def test_report_payload_contains_model_backed_sections() -> None:
+    engine = RentVsBuyEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    repository = FileScenarioRepository(Path.cwd() / "data")
+    service = FamilyFinancialCompassService(
+        engine=engine,
+        repository=repository,
+        audit_trail=build_default_audit_trail(),
+        default_user_id="user-report-test",
+    )
+    inputs = UserScenarioInput(
+        target_home_price_cents=dollars_to_cents(550_000),
+        down_payment_cents=dollars_to_cents(110_000),
+        loan_term_years=30,
+        expected_years_in_home=7.0,
+        current_monthly_rent_cents=dollars_to_cents(2_850),
+        annual_household_income_cents=dollars_to_cents(210_000),
+        current_savings_cents=dollars_to_cents(150_000),
+        monthly_savings_cents=dollars_to_cents(2_000),
+        expected_home_appreciation_rate=0.035,
+        expected_investment_return_rate=0.07,
+        risk_profile=RiskProfile.MODERATE,
+        loss_behavior=LossBehavior.HOLD,
+        income_stability=IncomeStability.STABLE,
+        employment_tied_to_local_economy=False,
+        current_housing_status=HousingStatus.RENTING,
+        market_region="national",
+        marginal_tax_rate=0.24,
+        itemizes_deductions=False,
+        filing_status=FilingStatus.MARRIED_FILING_JOINTLY,
+    )
+
+    payload = service.build_rent_vs_buy_report_payload(inputs, seed=7)
+
+    assert payload["model_version"] == DEFAULT_SYSTEM_ASSUMPTIONS.model_version
+    assert "informational and educational purposes only" in payload["disclaimer"]
+    report = payload["report"]
+    assert report["winner"] in {"buying", "renting"}
+    assert len(report["yearly_net_worth"]) >= 1
+    assert len(report["sensitivity"]["rows"]) == 9
+    assert report["narrative_source"] == "template"
+    assert report["year_one_costs"]["gross_annual_cents"] >= report["year_one_costs"]["true_annual_cents"]
+    assert any(item["label"] == "Buyer closing costs" for item in report["audit_trail"])
+    assert "does not reach break-even" in report["narratives"]["verdict_driver"]
+
+
+def test_report_endpoint_is_available() -> None:
+    from fastapi.testclient import TestClient
+
+    from family_financial_compass.app import create_app
+    from family_financial_compass.config import DEFAULT_ASSUMPTIONS_PATH
+    from family_financial_compass.settings import AppSettings
+
+    client = TestClient(
+        create_app(
+            AppSettings(
+                host="127.0.0.1",
+                port=8000,
+                scenario_store_backend="file",
+                data_dir=Path.cwd() / "data",
+                database_url=None,
+                database_min_pool_size=1,
+                database_max_pool_size=1,
+                database_connect_timeout_seconds=5.0,
+                assumptions_path=DEFAULT_ASSUMPTIONS_PATH,
+                default_user_id="report-endpoint-test",
+                scenario_list_default_limit=25,
+                scenario_list_max_limit=100,
+                allowed_origins=(),
+                groq_api_key=None,
+                groq_model="openai/gpt-oss-20b",
+                groq_base_url="https://api.groq.com/openai/v1/chat/completions",
+            )
+        )
+    )
+    payload = {
+        "input": {
+            "target_home_price_cents": 55_000_000,
+            "down_payment_cents": 11_000_000,
+            "loan_term_years": 30,
+            "expected_years_in_home": 7.0,
+            "current_monthly_rent_cents": 285_000,
+            "annual_household_income_cents": 21_000_000,
+            "current_savings_cents": 15_000_000,
+            "monthly_savings_cents": 200_000,
+            "expected_home_appreciation_rate": 0.035,
+            "expected_investment_return_rate": 0.07,
+            "risk_profile": "moderate",
+            "loss_behavior": "hold",
+            "income_stability": "stable",
+            "employment_tied_to_local_economy": False,
+            "current_housing_status": "renting",
+            "market_region": "national",
+            "marginal_tax_rate": 0.24,
+            "itemizes_deductions": False,
+            "filing_status": "married_filing_jointly",
+        },
+        "simulation_seed": 7,
+    }
+
+    response = client.post("/v1/rent-vs-buy/report", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "report" in body
+    assert body["report"]["sensitivity"]["most_sensitive_label"]

@@ -2,6 +2,7 @@ import type {
   AnalysisEnvelope,
   AnalyzeRequestPayload,
   CreateScenarioPayload,
+  ReportEnvelope,
   ScenarioEnvelope,
   ScenarioListEnvelope,
 } from "./types";
@@ -36,6 +37,13 @@ export function analyzeRentVsBuy(payload: AnalyzeRequestPayload): Promise<Analys
 
 export function saveRentVsBuyScenario(payload: CreateScenarioPayload): Promise<ScenarioEnvelope> {
   return request<ScenarioEnvelope>("/v1/rent-vs-buy/scenarios", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function buildRentVsBuyReport(payload: AnalyzeRequestPayload): Promise<ReportEnvelope> {
+  return request<ReportEnvelope>("/v1/rent-vs-buy/report", {
     method: "POST",
     body: JSON.stringify(payload),
   });

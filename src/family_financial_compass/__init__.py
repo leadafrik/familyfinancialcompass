@@ -11,6 +11,7 @@ from .models import (
     SystemAssumptions,
     UserScenarioInput,
 )
+from .reporting import build_rent_vs_buy_report
 from .repository import FileScenarioRepository, PostgresScenarioRepository, ScenarioBundle, ScenarioPage
 from .rent_vs_buy import RentVsBuyEngine
 from .service import FamilyFinancialCompassService
@@ -47,6 +48,7 @@ __all__ = [
     "after_tax_investment_return",
     "capital_gains_tax_on_sale_cents",
     "create_saved_scenario",
+    "build_rent_vs_buy_report",
     "incremental_itemized_deduction_cents",
     "incremental_mortgage_interest_deduction_cents",
     "mortgage_interest_tax_saving_cents",

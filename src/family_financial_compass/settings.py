@@ -49,6 +49,9 @@ class AppSettings:
     scenario_list_default_limit: int
     scenario_list_max_limit: int
     allowed_origins: tuple[str, ...]
+    groq_api_key: str | None
+    groq_model: str
+    groq_base_url: str
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -73,4 +76,7 @@ class AppSettings:
             scenario_list_default_limit=int(os.getenv("FFC_SCENARIO_LIST_DEFAULT_LIMIT", "25")),
             scenario_list_max_limit=int(os.getenv("FFC_SCENARIO_LIST_MAX_LIMIT", "100")),
             allowed_origins=_parse_csv_env(os.getenv("FFC_ALLOWED_ORIGINS")),
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+            groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+            groq_base_url=os.getenv("GROQ_API_BASE_URL", "https://api.groq.com/openai/v1/chat/completions"),
         )
