@@ -1,0 +1,83 @@
+{
+  "model_version": "2.0.0-alpha.1",
+  "mortgage_rate": 0.0682,
+  "property_tax_rate": 0.0174,
+  "annual_home_insurance_cents": 240000,
+  "annual_rent_growth_rate": 0.032,
+  "maintenance_rate": 0.01,
+  "selling_cost_rate": 0.07,
+  "annual_pmi_rate": 0.01,
+  "buyer_closing_cost_rate": 0.03,
+  "monte_carlo": {
+    "scenario_count": 10000,
+    "appreciation_stddev": 0.025,
+    "rent_growth_stddev": 0.012,
+    "mortgage_rate_stddev": 0.003,
+    "annual_appreciation_mean": 0.035,
+    "annual_rent_growth_mean": 0.032,
+    "investment_volatility_by_risk": {
+      "conservative": {
+        "low": 0.08,
+        "stated": 0.1,
+        "high": 0.12
+      },
+      "moderate": {
+        "low": 0.12,
+        "stated": 0.16,
+        "high": 0.2
+      },
+      "aggressive": {
+        "low": 0.16,
+        "stated": 0.2,
+        "high": 0.24
+      }
+    },
+    "correlation_matrix": [
+      [1.0, 0.25, 0.3, -0.35],
+      [0.25, 1.0, 0.2, -0.15],
+      [0.3, 0.2, 1.0, -0.2],
+      [-0.35, -0.15, -0.2, 1.0]
+    ]
+  },
+  "behavioral": {
+    "loss_aversion_lambda": 2.25,
+    "panic_sale_expected_return_penalty": 0.015,
+    "stable_income_liquidity_premium": 0.0075,
+    "variable_income_liquidity_premium": 0.02
+  },
+  "audit_trail": [
+    {
+      "name": "30-year mortgage rate",
+      "value": "6.82%",
+      "source": "Freddie Mac PMMS",
+      "sourced_at": "2026-03-27"
+    },
+    {
+      "name": "State property tax",
+      "value": "1.74%",
+      "source": "Tax Foundation 2025",
+      "sourced_at": "2025-11-01"
+    },
+    {
+      "name": "Annual home insurance",
+      "value": "$2,400",
+      "source": "Insurance Information Institute 2025",
+      "sourced_at": "2025-11-01"
+    },
+    {
+      "name": "CPI / rent growth",
+      "value": "3.20%",
+      "source": "BLS CPI, Feb 2026",
+      "sourced_at": "2026-03-12",
+      "parameter": "annual_rent_growth_rate",
+      "last_updated": "2026-03-12"
+    },
+    {
+      "parameter": "buyer_closing_cost_rate",
+      "value": 0.03,
+      "source": "CFPB closing cost estimates 2024",
+      "last_updated": "2024-01-01",
+      "notes": "Includes origination, title, escrow. Excludes prepaid items."
+    }
+  ]
+}

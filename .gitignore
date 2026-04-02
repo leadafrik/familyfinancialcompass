@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.pytest_tmp/
+pytest-cache-files-*/
+.tmp/
+.env
+data/scenarios/
+data/test-runs/
+src/family_financial_compass.egg-info/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
