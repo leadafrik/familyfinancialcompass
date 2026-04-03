@@ -132,7 +132,6 @@ class SystemAssumptions:
         bounded_rates = {
             "mortgage_rate": self.mortgage_rate,
             "property_tax_rate": self.property_tax_rate,
-            "annual_rent_growth_rate": self.annual_rent_growth_rate,
             "maintenance_rate": self.maintenance_rate,
             "selling_cost_rate": self.selling_cost_rate,
             "annual_pmi_rate": self.annual_pmi_rate,
@@ -141,6 +140,8 @@ class SystemAssumptions:
         for name, value in bounded_rates.items():
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1.")
+        if not -1.0 < self.annual_rent_growth_rate <= 1.0:
+            raise ValueError("annual_rent_growth_rate must be greater than -1 and no more than 1.")
         if self.annual_home_insurance_cents < 0:
             raise ValueError("Annual home insurance must be non-negative.")
 
@@ -154,6 +155,35 @@ class AssumptionAuditItem:
     parameter: str | None = None
     last_updated: date | None = None
     notes: str | None = None
+
+
+@dataclass(frozen=True)
+class AssumptionOverrides:
+    mortgage_rate: float | None = None
+    property_tax_rate: float | None = None
+    annual_home_insurance_cents: int | None = None
+    annual_rent_growth_rate: float | None = None
+    maintenance_rate: float | None = None
+    selling_cost_rate: float | None = None
+    annual_pmi_rate: float | None = None
+    buyer_closing_cost_rate: float | None = None
+
+    def __post_init__(self) -> None:
+        bounded_rates = {
+            "mortgage_rate": self.mortgage_rate,
+            "property_tax_rate": self.property_tax_rate,
+            "maintenance_rate": self.maintenance_rate,
+            "selling_cost_rate": self.selling_cost_rate,
+            "annual_pmi_rate": self.annual_pmi_rate,
+            "buyer_closing_cost_rate": self.buyer_closing_cost_rate,
+        }
+        for name, value in bounded_rates.items():
+            if value is not None and not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1.")
+        if self.annual_rent_growth_rate is not None and not -1.0 < self.annual_rent_growth_rate <= 1.0:
+            raise ValueError("annual_rent_growth_rate must be greater than -1 and no more than 1.")
+        if self.annual_home_insurance_cents is not None and self.annual_home_insurance_cents < 0:
+            raise ValueError("annual_home_insurance_cents must be non-negative.")
 
 
 @dataclass(frozen=True)

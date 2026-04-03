@@ -26,9 +26,23 @@ export interface RentVsBuyInputPayload {
   filing_status: FilingStatus;
 }
 
+export interface AssumptionOverridesPayload {
+  mortgage_rate?: number;
+  property_tax_rate?: number;
+  annual_home_insurance_cents?: number;
+  annual_rent_growth_rate?: number;
+  maintenance_rate?: number;
+  selling_cost_rate?: number;
+  annual_pmi_rate?: number;
+  buyer_closing_cost_rate?: number;
+}
+
 export interface AnalyzeRequestPayload {
   input: RentVsBuyInputPayload;
   simulation_seed: number;
+  assumption_overrides?: AssumptionOverridesPayload;
+  assumptions_snapshot?: Record<string, unknown>;
+  audit_trail_snapshot?: AuditTrailItem[];
 }
 
 export interface CreateScenarioPayload extends AnalyzeRequestPayload {
@@ -236,6 +250,34 @@ export interface ReportEnvelope {
   report: RentVsBuyReport;
 }
 
+export interface CurrentAssumptionsEnvelope {
+  model_version: string;
+  disclaimer: string;
+  source: string;
+  cache_date: string;
+  assumptions: {
+    model_version: string;
+    mortgage_rate: number;
+    property_tax_rate: number;
+    annual_home_insurance_cents: number;
+    annual_rent_growth_rate: number;
+    maintenance_rate: number;
+    selling_cost_rate: number;
+    annual_pmi_rate: number;
+    buyer_closing_cost_rate: number;
+    monte_carlo: {
+      annual_appreciation_mean: number;
+      annual_rent_growth_mean: number;
+      scenario_count: number;
+    };
+    behavioral: {
+      stable_income_liquidity_premium: number;
+      variable_income_liquidity_premium: number;
+    };
+  };
+  audit_trail: AuditTrailItem[];
+}
+
 export interface ScenarioEnvelope {
   scenario_id: string;
   user_id: string;
@@ -273,4 +315,14 @@ export interface FormState {
   marginalTaxRate: string;
   itemizesDeductions: boolean;
   filingStatus: FilingStatus;
+}
+
+export interface AssumptionFormState {
+  mortgageRate: string;
+  propertyTaxRate: string;
+  monthlyHomeInsurance: string;
+  rentGrowthRate: string;
+  maintenanceRate: string;
+  sellerClosingRate: string;
+  buyerClosingRate: string;
 }

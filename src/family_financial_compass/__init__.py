@@ -1,6 +1,13 @@
+from .assumptions import (
+    FileAssumptionStore,
+    InMemoryAssumptionStore,
+    PostgresAssumptionStore,
+    apply_assumption_overrides,
+)
 from .config import DEFAULT_SYSTEM_ASSUMPTIONS, MODEL_VERSION
 from .db import InMemoryScenarioRepository, ScenarioRepository
 from .models import (
+    AssumptionOverrides,
     AssumptionAuditItem,
     FilingStatus,
     HousingStatus,
@@ -27,16 +34,20 @@ from .tax import (
 
 __all__ = [
     "AssumptionAuditItem",
+    "AssumptionOverrides",
     "DEFAULT_SYSTEM_ASSUMPTIONS",
+    "FileAssumptionStore",
     "FilingStatus",
     "FileScenarioRepository",
     "HousingStatus",
+    "InMemoryAssumptionStore",
     "IncomeStability",
     "InMemoryScenarioRepository",
     "LossBehavior",
     "MODEL_VERSION",
     "FamilyFinancialCompassService",
     "PostgresScenarioRepository",
+    "PostgresAssumptionStore",
     "RentVsBuyAnalysis",
     "RentVsBuyEngine",
     "RiskProfile",
@@ -46,6 +57,7 @@ __all__ = [
     "SystemAssumptions",
     "UserScenarioInput",
     "after_tax_investment_return",
+    "apply_assumption_overrides",
     "capital_gains_tax_on_sale_cents",
     "create_saved_scenario",
     "build_rent_vs_buy_report",

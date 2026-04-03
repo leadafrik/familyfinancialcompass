@@ -1,9 +1,19 @@
 import { startTransition, useEffect, useState } from "react";
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
 
-import { analyzeRentVsBuy, buildRentVsBuyReport, listScenarios, saveRentVsBuyScenario } from "./api";
+import {
+  analyzeRentVsBuy,
+  buildRentVsBuyReport,
+  getCurrentRentVsBuyAssumptions,
+  listScenarios,
+  saveRentVsBuyScenario,
+} from "./api";
 import type {
   AnalysisEnvelope,
+  AuditTrailItem,
+  AssumptionFormState,
+  AssumptionOverridesPayload,
+  CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   FormState,
   RentVsBuyInputPayload,
@@ -82,6 +92,22 @@ const defaultFormState: FormState = {
   filingStatus: "married_filing_jointly",
 };
 
+const defaultAssumptionFormState: AssumptionFormState = {
+  mortgageRate: "6.82",
+  propertyTaxRate: "1.74",
+  monthlyHomeInsurance: "200",
+  rentGrowthRate: "3.2",
+  maintenanceRate: "1.0",
+  sellerClosingRate: "7.0",
+  buyerClosingRate: "3.0",
+};
+
+type AssumptionBaseline = {
+  assumptionsSnapshot: Record<string, unknown>;
+  auditTrail: AuditTrailItem[];
+  assumptionForm: AssumptionFormState;
+};
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function dollarsToCents(value: string): number {
@@ -92,6 +118,10 @@ function dollarsToCents(value: string): number {
 function percentToRate(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed / 100 : 0;
+}
+
+function rateToPercentString(value: number, digits = 2): string {
+  return (value * 100).toFixed(digits);
 }
 
 function formatCurrency(cents: number): string {
@@ -110,6 +140,10 @@ function formatDate(value: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function centsToMonthlyDollars(cents: number): string {
+  return String(Math.round(cents / 1200));
 }
 
 function buildPayload(form: FormState): RentVsBuyInputPayload {
@@ -136,10 +170,75 @@ function buildPayload(form: FormState): RentVsBuyInputPayload {
   };
 }
 
-function buildScenarioPayload(form: FormState, userId: string): CreateScenarioPayload {
-  return {
+function buildAssumptionOverrides(
+  form: AssumptionFormState,
+  baseline: AssumptionBaseline | null,
+): AssumptionOverridesPayload | undefined {
+  const candidate: AssumptionOverridesPayload = {
+    mortgage_rate: percentToRate(form.mortgageRate),
+    property_tax_rate: percentToRate(form.propertyTaxRate),
+    annual_home_insurance_cents: dollarsToCents(form.monthlyHomeInsurance) * 12,
+    annual_rent_growth_rate: percentToRate(form.rentGrowthRate),
+    maintenance_rate: percentToRate(form.maintenanceRate),
+    selling_cost_rate: percentToRate(form.sellerClosingRate),
+    buyer_closing_cost_rate: percentToRate(form.buyerClosingRate),
+  };
+  if (baseline === null) {
+    return candidate;
+  }
+
+  const baselineCandidate: AssumptionOverridesPayload = {
+    mortgage_rate: percentToRate(baseline.assumptionForm.mortgageRate),
+    property_tax_rate: percentToRate(baseline.assumptionForm.propertyTaxRate),
+    annual_home_insurance_cents:
+      dollarsToCents(baseline.assumptionForm.monthlyHomeInsurance) * 12,
+    annual_rent_growth_rate: percentToRate(baseline.assumptionForm.rentGrowthRate),
+    maintenance_rate: percentToRate(baseline.assumptionForm.maintenanceRate),
+    selling_cost_rate: percentToRate(baseline.assumptionForm.sellerClosingRate),
+    buyer_closing_cost_rate: percentToRate(baseline.assumptionForm.buyerClosingRate),
+  };
+  const overrides = Object.fromEntries(
+    Object.entries(candidate).filter(
+      ([key, value]) => baselineCandidate[key as keyof AssumptionOverridesPayload] !== value,
+    ),
+  ) as AssumptionOverridesPayload;
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function buildAnalyzeRequestPayload(
+  form: FormState,
+  assumptionForm: AssumptionFormState,
+  baseline: AssumptionBaseline | null,
+) {
+  const payload: CreateScenarioPayload | {
+    input: RentVsBuyInputPayload;
+    simulation_seed: number;
+    assumption_overrides?: AssumptionOverridesPayload;
+    assumptions_snapshot?: Record<string, unknown>;
+    audit_trail_snapshot?: AuditTrailItem[];
+  } = {
     input: buildPayload(form),
     simulation_seed: 7,
+  };
+  const overrides = buildAssumptionOverrides(assumptionForm, baseline);
+  if (overrides) {
+    payload.assumption_overrides = overrides;
+  }
+  if (baseline) {
+    payload.assumptions_snapshot = baseline.assumptionsSnapshot;
+    payload.audit_trail_snapshot = baseline.auditTrail;
+  }
+  return payload;
+}
+
+function buildScenarioPayload(
+  form: FormState,
+  assumptionForm: AssumptionFormState,
+  userId: string,
+  baseline: AssumptionBaseline | null,
+): CreateScenarioPayload {
+  return {
+    ...buildAnalyzeRequestPayload(form, assumptionForm, baseline),
     user_id: userId,
     idempotency_key: crypto.randomUUID(),
   };
@@ -254,6 +353,46 @@ function snapshotToForm(snapshot: Record<string, unknown>): FormState {
   };
 }
 
+function snapshotToAssumptionForm(snapshot: Record<string, unknown>): AssumptionFormState {
+  return {
+    mortgageRate: rateToPercentString(Number(snapshot.mortgage_rate ?? 0), 2),
+    propertyTaxRate: rateToPercentString(Number(snapshot.property_tax_rate ?? 0), 2),
+    monthlyHomeInsurance: centsToMonthlyDollars(Number(snapshot.annual_home_insurance_cents ?? 0)),
+    rentGrowthRate: rateToPercentString(Number(snapshot.annual_rent_growth_rate ?? 0), 2),
+    maintenanceRate: rateToPercentString(Number(snapshot.maintenance_rate ?? 0), 2),
+    sellerClosingRate: rateToPercentString(Number(snapshot.selling_cost_rate ?? 0), 2),
+    buyerClosingRate: rateToPercentString(Number(snapshot.buyer_closing_cost_rate ?? 0), 2),
+  };
+}
+
+function currentAssumptionsToForm(payload: CurrentAssumptionsEnvelope): AssumptionFormState {
+  return snapshotToAssumptionForm(payload.assumptions as unknown as Record<string, unknown>);
+}
+
+function currentAssumptionsToBaseline(
+  payload: CurrentAssumptionsEnvelope | null,
+): AssumptionBaseline | null {
+  if (payload === null) {
+    return null;
+  }
+  return {
+    assumptionsSnapshot: payload.assumptions as Record<string, unknown>,
+    auditTrail: payload.audit_trail,
+    assumptionForm: currentAssumptionsToForm(payload),
+  };
+}
+
+function scenarioToBaseline(scenario: ScenarioEnvelope | null): AssumptionBaseline | null {
+  if (scenario === null) {
+    return null;
+  }
+  return {
+    assumptionsSnapshot: scenario.assumptions_snapshot,
+    auditTrail: scenario.analysis.audit_trail,
+    assumptionForm: snapshotToAssumptionForm(scenario.assumptions_snapshot),
+  };
+}
+
 // ── verdict helpers ───────────────────────────────────────────────────────────
 
 function verdictConfig(prob: number): {
@@ -295,14 +434,18 @@ function verdictConfig(prob: number): {
 function App() {
   const [activeModule, setActiveModule] = useState<ModuleId>("rent-vs-buy");
   const [form, setForm] = useState<FormState>(defaultFormState);
+  const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionFormState);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAssumptions, setShowAssumptions] = useState(false);
 
   const [analysisEnvelope, setAnalysisEnvelope] = useState<AnalysisEnvelope | null>(null);
+  const [currentAssumptions, setCurrentAssumptions] = useState<CurrentAssumptionsEnvelope | null>(null);
   const [savedScenarios, setSavedScenarios] = useState<ScenarioEnvelope[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
   const [userId, setUserId] = useState("");
 
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [assumptionError, setAssumptionError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -321,6 +464,26 @@ function App() {
     setUserId(generated);
   }, []);
 
+  useEffect(() => {
+    void getCurrentRentVsBuyAssumptions()
+      .then((payload) => {
+        startTransition(() => {
+          setCurrentAssumptions(payload);
+          setAssumptionForm(currentAssumptionsToForm(payload));
+          setForm((current) => ({
+            ...current,
+            appreciationRate: rateToPercentString(
+              payload.assumptions.monte_carlo.annual_appreciation_mean,
+              1,
+            ),
+          }));
+        });
+      })
+      .catch(() => {
+        setAssumptionError("Live defaults could not be refreshed. Using local fallback assumptions.");
+      });
+  }, []);
+
   // ── load saved scenarios ──
   useEffect(() => {
     if (!userId) return;
@@ -335,6 +498,8 @@ function App() {
 
   const selectedScenario =
     savedScenarios.find((s) => s.scenario_id === selectedScenarioId) ?? null;
+  const assumptionBaseline =
+    scenarioToBaseline(selectedScenario) ?? currentAssumptionsToBaseline(currentAssumptions);
   const activeAnalysis = selectedScenario?.analysis ?? analysisEnvelope?.analysis ?? null;
   const activeModelVersion =
     selectedScenario?.model_version ?? analysisEnvelope?.model_version ?? null;
@@ -348,9 +513,10 @@ function App() {
     setAnalysisError(null);
     setSaveSuccess(false);
     setIsAnalyzing(true);
-    setSelectedScenarioId(null);
     try {
-      const r = await analyzeRentVsBuy({ input: buildPayload(form), simulation_seed: 7 });
+      const request = buildAnalyzeRequestPayload(form, assumptionForm, assumptionBaseline);
+      setSelectedScenarioId(null);
+      const r = await analyzeRentVsBuy(request);
       startTransition(() => setAnalysisEnvelope(r));
     } catch (e: unknown) {
       setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
@@ -365,7 +531,9 @@ function App() {
     setSaveSuccess(false);
     setIsSaving(true);
     try {
-      const r = await saveRentVsBuyScenario(buildScenarioPayload(form, userId));
+      const r = await saveRentVsBuyScenario(
+        buildScenarioPayload(form, assumptionForm, userId, assumptionBaseline),
+      );
       startTransition(() => {
         setSavedScenarios((cur) => [
           r,
@@ -391,6 +559,9 @@ function App() {
           ? snapshotToPayload(selectedScenario.inputs_snapshot)
           : buildPayload(form),
         simulation_seed: 7,
+        assumption_overrides: buildAssumptionOverrides(assumptionForm, assumptionBaseline),
+        assumptions_snapshot: assumptionBaseline?.assumptionsSnapshot,
+        audit_trail_snapshot: assumptionBaseline?.auditTrail,
       });
       const [{ pdf }, { RentVsBuyReportDocument }] = await Promise.all([
         import("@react-pdf/renderer"),
@@ -459,13 +630,14 @@ function App() {
                     setAnalysisEnvelope(null);
                     setSaveSuccess(false);
                     setForm(snapshotToForm(s.inputs_snapshot));
+                    setAssumptionForm(snapshotToAssumptionForm(s.assumptions_snapshot));
                   }}
                 >
                   <strong>
                     {formatCurrency(
                       Number(s.inputs_snapshot.target_home_price_cents ?? 0),
                     )}{" "}
-                    · {s.inputs_snapshot.expected_years_in_home} yr plan
+                    · {String(s.inputs_snapshot.expected_years_in_home ?? "")} yr plan
                   </strong>
                   <span>
                     {formatPercent(s.analysis.monte_carlo.probability_buy_beats_rent)} buy
@@ -553,6 +725,104 @@ function App() {
                 </div>
 
                 {/* ── Advanced toggle ── */}
+                <button
+                  type="button"
+                  className="advance-toggle"
+                  onClick={() => setShowAssumptions((v) => !v)}
+                >
+                  <span>{showAssumptions ? "▾" : "▸"}</span>
+                  Model assumptions
+                  {!showAssumptions && (
+                    <span style={{ fontWeight: 400, opacity: 0.65 }}>
+                      &ensp;(live defaults + sliders)
+                    </span>
+                  )}
+                </button>
+
+                {showAssumptions && (
+                  <div className="assumption-card">
+                    <div className="assumption-card__header">
+                      <div>
+                        <strong>Current defaults</strong>
+                        <p>
+                          {selectedScenario
+                            ? "Using the saved scenario's assumption snapshot."
+                            : currentAssumptions
+                            ? `Loaded from ${currentAssumptions.source} as of ${formatDate(currentAssumptions.cache_date)}.`
+                            : "Using local fallback defaults until the live assumption feed responds."}
+                        </p>
+                      </div>
+                    </div>
+                    {assumptionError && <p className="message message--error">{assumptionError}</p>}
+                    <div className="assumption-grid">
+                      <RangeField
+                        label="Mortgage rate"
+                        value={assumptionForm.mortgageRate}
+                        min={3}
+                        max={10}
+                        step={0.01}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, mortgageRate: value }))}
+                      />
+                      <RangeField
+                        label="Rent growth"
+                        value={assumptionForm.rentGrowthRate}
+                        min={0}
+                        max={8}
+                        step={0.1}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, rentGrowthRate: value }))}
+                      />
+                      <RangeField
+                        label="Property tax"
+                        value={assumptionForm.propertyTaxRate}
+                        min={0}
+                        max={4}
+                        step={0.01}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, propertyTaxRate: value }))}
+                      />
+                      <RangeField
+                        label="Home insurance"
+                        value={assumptionForm.monthlyHomeInsurance}
+                        min={100}
+                        max={600}
+                        step={5}
+                        prefix="$"
+                        suffix="/mo"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, monthlyHomeInsurance: value }))}
+                      />
+                      <RangeField
+                        label="Maintenance"
+                        value={assumptionForm.maintenanceRate}
+                        min={0}
+                        max={3}
+                        step={0.1}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, maintenanceRate: value }))}
+                      />
+                      <RangeField
+                        label="Buyer closing costs"
+                        value={assumptionForm.buyerClosingRate}
+                        min={0}
+                        max={6}
+                        step={0.1}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, buyerClosingRate: value }))}
+                      />
+                      <RangeField
+                        label="Seller closing"
+                        value={assumptionForm.sellerClosingRate}
+                        min={0}
+                        max={10}
+                        step={0.1}
+                        suffix="%"
+                        onChange={(value) => setAssumptionForm((f) => ({ ...f, sellerClosingRate: value }))}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   className="advance-toggle"
@@ -880,15 +1150,15 @@ function OutputPanel({
       {cbMonthly && (
         <div className="detail-card output-section">
           <h4>Year one — monthly cost of buying</h4>
-          {[
+          {([
             ["Mortgage (P+I)", cbMonthly.pi],
             ["Property tax", cbMonthly.tax],
             ["Insurance", cbMonthly.ins],
             ["Maintenance", cbMonthly.maint],
             cbMonthly.pmi > 0 ? ["PMI", cbMonthly.pmi] : null,
             ["Liquidity premium on equity", cbMonthly.liq],
-          ]
-            .filter(Boolean)
+          ] as Array<[string, number] | null>)
+            .filter((row): row is [string, number] => row !== null)
             .map(([label, val]) => (
               <div key={label as string} className="result-row">
                 <span style={{ color: "var(--muted)" }}>{label}</span>
@@ -1060,6 +1330,59 @@ function SelectField({
             </option>
           ))}
         </select>
+      </div>
+    </label>
+  );
+}
+
+function RangeField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  prefix,
+  suffix,
+}: {
+  label: string;
+  value: string;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: string) => void;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <label className="range-field">
+      <div className="range-field__row">
+        <span>{label}</span>
+        <strong>
+          {prefix ?? ""}
+          {value}
+          {suffix ?? ""}
+        </strong>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <div className="range-field__meta">
+        <small>
+          {prefix ?? ""}
+          {min}
+          {suffix ?? ""}
+        </small>
+        <small>
+          {prefix ?? ""}
+          {max}
+          {suffix ?? ""}
+        </small>
       </div>
     </label>
   );

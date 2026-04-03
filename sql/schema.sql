@@ -68,6 +68,22 @@ create table if not exists behavioral_adjustments (
     created_at timestamptz not null default now()
 );
 
+create table if not exists assumption_sets (
+    id uuid primary key default gen_random_uuid(),
+    set_key text not null unique,
+    model_version text not null,
+    refresh_mode text not null default 'auto',
+    source_label text not null,
+    cache_date date not null,
+    assumptions_json jsonb not null,
+    audit_trail_json jsonb not null,
+    dynamic_inputs_json jsonb not null default '{}'::jsonb,
+    is_active boolean not null default false,
+    created_at timestamptz not null default now(),
+    activated_at timestamptz not null default now(),
+    check (refresh_mode in ('auto', 'manual'))
+);
+
 create table if not exists scenarios (
     id uuid primary key default gen_random_uuid(),
     user_id text not null,
@@ -94,6 +110,9 @@ create index if not exists idx_scenarios_user_id_created_at on scenarios (user_i
 create unique index if not exists idx_scenarios_user_id_idempotency_key
     on scenarios (user_id, idempotency_key)
     where idempotency_key is not null;
+create unique index if not exists idx_assumption_sets_active
+    on assumption_sets ((1))
+    where is_active;
 create index if not exists idx_scenarios_module_created_at on scenarios (module, created_at desc);
 create index if not exists idx_scenarios_market_region_created_at on scenarios (market_region, created_at desc);
 create index if not exists idx_scenario_outputs_probability on scenario_outputs (probability_buy_beats_rent);

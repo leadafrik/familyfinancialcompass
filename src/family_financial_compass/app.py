@@ -1,29 +1,29 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .assumptions import FileAssumptionStore, PostgresAssumptionStore
 from .api_models import (
     AnalysisEnvelope,
     AnalyzeRequest,
     CreateScenarioRequest,
+    CurrentAssumptionsEnvelope,
     HealthEnvelope,
     ReportEnvelope,
     ScenarioEnvelope,
     ScenarioListEnvelope,
 )
-from .config import load_assumption_bundle
 from .repository import FileScenarioRepository, PostgresScenarioRepository
-from .rent_vs_buy import RentVsBuyEngine
 from .service import FamilyFinancialCompassService
 from .settings import AppSettings
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     app_settings = settings or AppSettings.from_env()
-    assumption_bundle = load_assumption_bundle(app_settings.assumptions_path)
-    engine = RentVsBuyEngine(assumption_bundle.assumptions)
     if app_settings.scenario_store_backend == "postgres":
         if app_settings.database_url is None:
             raise ValueError("FFC_DATABASE_URL must be set when FFC_SCENARIO_STORE_BACKEND=postgres.")
@@ -33,21 +33,34 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             max_pool_size=app_settings.database_max_pool_size,
             connect_timeout_seconds=app_settings.database_connect_timeout_seconds,
         )
+        assumption_store = PostgresAssumptionStore(
+            pool=repository.pool,
+            fallback_path=app_settings.assumptions_path,
+            cache_ttl_days=app_settings.assumptions_cache_ttl_days,
+        )
     else:
         repository = FileScenarioRepository(app_settings.data_dir)
+        assumption_store = FileAssumptionStore(app_settings.assumptions_path)
     service = FamilyFinancialCompassService(
-        engine=engine,
         repository=repository,
-        audit_trail=assumption_bundle.audit_trail,
+        assumption_store=assumption_store,
         default_user_id=app_settings.default_user_id,
         groq_api_key=app_settings.groq_api_key,
         groq_model=app_settings.groq_model,
         groq_base_url=app_settings.groq_base_url,
     )
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        close = getattr(repository, "close", None)
+        if callable(close):
+            close()
+
     app = FastAPI(
         title="Family Financial Compass API",
         version=service.model_version,
+        lifespan=lifespan,
     )
     if app_settings.allowed_origins:
         app.add_middleware(
@@ -66,36 +79,52 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @app.get("/healthz", response_model=HealthEnvelope)
     async def healthz() -> HealthEnvelope:
+        current = service.current_assumptions_payload()
         return HealthEnvelope(
             status="ok",
             model_version=service.model_version,
             scenario_store=repository.storage_target,
             assumptions_path=str(app_settings.assumptions_path),
+            assumptions_source=current["source"],
+            assumptions_cache_date=current["cache_date"],
         )
 
     @app.get("/readyz", response_model=HealthEnvelope)
     async def readyz() -> HealthEnvelope:
+        current = service.current_assumptions_payload()
         return HealthEnvelope(
             status="ok",
             model_version=service.model_version,
             scenario_store=repository.storage_target,
             assumptions_path=str(app_settings.assumptions_path),
+            assumptions_source=current["source"],
+            assumptions_cache_date=current["cache_date"],
         )
 
     @app.get("/livez", response_model=HealthEnvelope)
     async def livez() -> HealthEnvelope:
+        current = service.current_assumptions_payload()
         return HealthEnvelope(
             status="ok",
             model_version=service.model_version,
             scenario_store=repository.storage_target,
             assumptions_path=str(app_settings.assumptions_path),
+            assumptions_source=current["source"],
+            assumptions_cache_date=current["cache_date"],
         )
+
+    @app.get("/v1/rent-vs-buy/assumptions/current", response_model=CurrentAssumptionsEnvelope)
+    async def current_rent_vs_buy_assumptions() -> CurrentAssumptionsEnvelope:
+        return CurrentAssumptionsEnvelope(**service.current_assumptions_payload())
 
     @app.post("/v1/rent-vs-buy/analyze", response_model=AnalysisEnvelope)
     async def analyze_rent_vs_buy(request: AnalyzeRequest) -> AnalysisEnvelope:
         payload = service.analyze_rent_vs_buy_payload(
             request.input.to_domain(),
             seed=request.simulation_seed,
+            assumption_overrides=None if request.assumption_overrides is None else request.assumption_overrides.to_domain(),
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
         )
         return AnalysisEnvelope(**payload)
 
@@ -104,6 +133,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         payload = service.build_rent_vs_buy_report_payload(
             request.input.to_domain(),
             seed=request.simulation_seed,
+            assumption_overrides=None if request.assumption_overrides is None else request.assumption_overrides.to_domain(),
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
         )
         return ReportEnvelope(**payload)
 
@@ -114,6 +146,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             user_id=request.user_id,
             seed=request.simulation_seed,
             idempotency_key=request.idempotency_key,
+            assumption_overrides=None if request.assumption_overrides is None else request.assumption_overrides.to_domain(),
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
         )
         return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
 
@@ -143,11 +178,5 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             items=[ScenarioEnvelope(**service.serialize_scenario_bundle(bundle)) for bundle in page.items],
             next_cursor=page.next_cursor,
         )
-
-    @app.on_event("shutdown")
-    async def shutdown() -> None:
-        close = getattr(repository, "close", None)
-        if callable(close):
-            close()
 
     return app

@@ -1,6 +1,7 @@
 import type {
   AnalysisEnvelope,
   AnalyzeRequestPayload,
+  CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   ReportEnvelope,
   ScenarioEnvelope,
@@ -47,6 +48,10 @@ export function buildRentVsBuyReport(payload: AnalyzeRequestPayload): Promise<Re
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function getCurrentRentVsBuyAssumptions(): Promise<CurrentAssumptionsEnvelope> {
+  return request<CurrentAssumptionsEnvelope>("/v1/rent-vs-buy/assumptions/current");
 }
 
 export function listScenarios(userId: string): Promise<ScenarioListEnvelope> {

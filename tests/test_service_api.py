@@ -250,6 +250,7 @@ def test_report_endpoint_is_available() -> None:
                 database_max_pool_size=1,
                 database_connect_timeout_seconds=5.0,
                 assumptions_path=DEFAULT_ASSUMPTIONS_PATH,
+                assumptions_cache_ttl_days=1,
                 default_user_id="report-endpoint-test",
                 scenario_list_default_limit=25,
                 scenario_list_max_limit=100,

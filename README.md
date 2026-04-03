@@ -53,6 +53,7 @@ Endpoints:
 
 - `GET /readyz`
 - `GET /livez`
+- `GET /v1/rent-vs-buy/assumptions/current`
 - `POST /v1/rent-vs-buy/analyze`
 - `POST /v1/rent-vs-buy/report`
 - `POST /v1/rent-vs-buy/scenarios`
@@ -71,6 +72,7 @@ Environment variables:
 - `FFC_DB_MIN_POOL_SIZE`: Postgres client pool minimum size
 - `FFC_DB_MAX_POOL_SIZE`: Postgres client pool maximum size
 - `FFC_ASSUMPTIONS_PATH`: path to assumptions JSON, default `config/system_assumptions.json`
+- `FFC_ASSUMPTIONS_CACHE_TTL_DAYS`: refresh cadence for live online assumptions, default `1`
 - `FFC_DEFAULT_USER_ID`: fallback scenario owner, default `anonymous`
 - `FFC_ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS
 - `GROQ_API_KEY`: optional Groq API key for report narrative generation
@@ -81,6 +83,8 @@ The app loads values from a root-level `.env` file automatically. Edit [`.env`](
 
 - `FFC_SCENARIO_STORE_BACKEND=postgres`
 - `FFC_DATABASE_URL=<your Neon direct connection string>`
+
+Assumptions are now runtime-dynamic when the API runs on Postgres. The service caches a resolved rent-vs-buy assumption set in Postgres for one day, refreshes mortgage and BLS rent/insurance defaults from public sources when the cache is stale, and falls back to [config/system_assumptions.json](C:/Users/gordo/Economics%20Decisions%20Engine/config/system_assumptions.json) if the live fetch fails. Saved scenarios still persist their resolved assumption snapshot, so historical results do not drift.
 
 ## Docker
 
@@ -101,7 +105,7 @@ npm run dev
 
 The Vite dev server proxies `/api` to the deployed Cloud Run backend by default. To point the UI at a different API base, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_BASE_URL`.
 
-The rent-vs-buy UI now supports on-demand PDF generation. The browser requests a report payload from `POST /v1/rent-vs-buy/report` and renders the PDF locally with React-PDF. If `GROQ_API_KEY` is configured on the backend, the short narrative sections are generated through Groq; otherwise the app falls back to deterministic template text.
+The rent-vs-buy UI now supports on-demand PDF generation and a compact live-assumptions drawer. The browser requests the current default assumption bundle from `GET /v1/rent-vs-buy/assumptions/current`, lets the user override the most material housing assumptions with sliders, sends those overrides into `POST /v1/rent-vs-buy/analyze` and `POST /v1/rent-vs-buy/report`, and renders the PDF locally with React-PDF. If `GROQ_API_KEY` is configured on the backend, the short narrative sections are generated through Groq; otherwise the app falls back to deterministic template text.
 
 Current product shape:
 

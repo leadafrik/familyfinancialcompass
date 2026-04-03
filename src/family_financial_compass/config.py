@@ -201,20 +201,12 @@ def _parse_audit_item(payload: dict) -> AssumptionAuditItem:
     )
 
 
-def load_assumption_bundle(path: str | Path | None = None) -> AssumptionBundle:
-    config_path = Path(path or DEFAULT_ASSUMPTIONS_PATH)
-    if not config_path.exists():
-        return default_assumption_bundle()
-
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-    monte_carlo_payload = payload["monte_carlo"]
-    behavioral_payload = payload["behavioral"]
+def _parse_monte_carlo_payload(monte_carlo_payload: dict) -> MonteCarloCalibration:
     volatility_payload = monte_carlo_payload.get(
         "investment_volatility_by_risk",
         monte_carlo_payload.get("investment_volatility_bands"),
     )
-
-    monte_carlo = MonteCarloCalibration(
+    return MonteCarloCalibration(
         scenario_count=int(monte_carlo_payload.get("scenario_count", monte_carlo_payload.get("num_simulations", DEFAULT_MONTE_CARLO.scenario_count))),
         appreciation_stddev=float(
             monte_carlo_payload.get("appreciation_stddev", monte_carlo_payload.get("annual_appreciation_std", DEFAULT_MONTE_CARLO.appreciation_stddev))
@@ -244,6 +236,12 @@ def load_assumption_bundle(path: str | Path | None = None) -> AssumptionBundle:
             monte_carlo_payload.get("annual_rent_growth_mean", DEFAULT_MONTE_CARLO.annual_rent_growth_mean)
         ),
     )
+
+
+def assumption_bundle_from_payload(payload: dict) -> AssumptionBundle:
+    monte_carlo_payload = payload["monte_carlo"]
+    behavioral_payload = payload["behavioral"]
+    monte_carlo = _parse_monte_carlo_payload(monte_carlo_payload)
     assumptions = SystemAssumptions(
         model_version=str(payload["model_version"]),
         mortgage_rate=float(payload["mortgage_rate"]),
@@ -265,3 +263,64 @@ def load_assumption_bundle(path: str | Path | None = None) -> AssumptionBundle:
     audit_payload = payload.get("audit_trail")
     audit_trail = tuple(_parse_audit_item(item) for item in audit_payload) if audit_payload else tuple(build_default_audit_trail())
     return AssumptionBundle(assumptions=assumptions, audit_trail=audit_trail)
+
+
+def assumption_bundle_to_payload(bundle: AssumptionBundle) -> dict:
+    assumptions = bundle.assumptions
+    monte_carlo = assumptions.monte_carlo
+    behavioral = assumptions.behavioral
+    return {
+        "model_version": assumptions.model_version,
+        "mortgage_rate": assumptions.mortgage_rate,
+        "property_tax_rate": assumptions.property_tax_rate,
+        "annual_home_insurance_cents": assumptions.annual_home_insurance_cents,
+        "annual_rent_growth_rate": assumptions.annual_rent_growth_rate,
+        "maintenance_rate": assumptions.maintenance_rate,
+        "selling_cost_rate": assumptions.selling_cost_rate,
+        "annual_pmi_rate": assumptions.annual_pmi_rate,
+        "buyer_closing_cost_rate": assumptions.buyer_closing_cost_rate,
+        "monte_carlo": {
+            "scenario_count": monte_carlo.scenario_count,
+            "appreciation_stddev": monte_carlo.appreciation_stddev,
+            "rent_growth_stddev": monte_carlo.rent_growth_stddev,
+            "mortgage_rate_stddev": monte_carlo.mortgage_rate_stddev,
+            "annual_appreciation_mean": monte_carlo.annual_appreciation_mean,
+            "annual_rent_growth_mean": monte_carlo.annual_rent_growth_mean,
+            "investment_volatility_by_risk": {
+                profile.value: {
+                    "low": band.low,
+                    "stated": band.stated,
+                    "high": band.high,
+                }
+                for profile, band in monte_carlo.investment_volatility_by_risk.items()
+            },
+            "correlation_matrix": [list(row) for row in monte_carlo.correlation_matrix],
+        },
+        "behavioral": {
+            "loss_aversion_lambda": behavioral.loss_aversion_lambda,
+            "panic_sale_expected_return_penalty": behavioral.panic_sale_expected_return_penalty,
+            "stable_income_liquidity_premium": behavioral.stable_income_liquidity_premium,
+            "variable_income_liquidity_premium": behavioral.variable_income_liquidity_premium,
+        },
+        "audit_trail": [
+            {
+                "name": item.name,
+                "parameter": item.parameter,
+                "value": item.value,
+                "source": item.source,
+                "sourced_at": item.sourced_at,
+                "last_updated": item.last_updated.isoformat() if item.last_updated else None,
+                "notes": item.notes,
+            }
+            for item in bundle.audit_trail
+        ],
+    }
+
+
+def load_assumption_bundle(path: str | Path | None = None) -> AssumptionBundle:
+    config_path = Path(path or DEFAULT_ASSUMPTIONS_PATH)
+    if not config_path.exists():
+        return default_assumption_bundle()
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    return assumption_bundle_from_payload(payload)

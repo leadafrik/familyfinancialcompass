@@ -166,11 +166,18 @@ class FileScenarioRepository:
 class PostgresScenarioRepository:
     def __init__(
         self,
-        database_url: str,
+        database_url: str | None = None,
         min_pool_size: int = 1,
         max_pool_size: int = 10,
         connect_timeout_seconds: float = 5.0,
+        pool: Any | None = None,
     ) -> None:
+        if pool is not None:
+            self._pool = pool
+            self._owns_pool = False
+            return
+        if database_url is None:
+            raise ValueError("database_url must be provided when pool is not supplied.")
         pool_class = self._load_pool_class()
         kwargs: dict[str, Any] = {
             "conninfo": database_url,
@@ -180,16 +187,23 @@ class PostgresScenarioRepository:
                 "autocommit": False,
                 "connect_timeout": connect_timeout_seconds,
             },
+            "check": pool_class.check_connection,
             "open": True,
         }
         self._pool = pool_class(**kwargs)
+        self._owns_pool = True
 
     @property
     def storage_target(self) -> str:
         return "postgres"
 
+    @property
+    def pool(self) -> Any:
+        return self._pool
+
     def close(self) -> None:
-        self._pool.close()
+        if self._owns_pool:
+            self._pool.close()
 
     def save(self, scenario: ScenarioRecord, output: ScenarioOutputRecord) -> ScenarioBundle:
         with self._pool.connection() as conn:

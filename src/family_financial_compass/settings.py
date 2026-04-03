@@ -45,6 +45,7 @@ class AppSettings:
     database_max_pool_size: int
     database_connect_timeout_seconds: float
     assumptions_path: Path
+    assumptions_cache_ttl_days: int
     default_user_id: str
     scenario_list_default_limit: int
     scenario_list_max_limit: int
@@ -72,6 +73,7 @@ class AppSettings:
             database_max_pool_size=int(os.getenv("FFC_DB_MAX_POOL_SIZE", "10")),
             database_connect_timeout_seconds=float(os.getenv("FFC_DB_CONNECT_TIMEOUT_SECONDS", "5.0")),
             assumptions_path=Path(os.getenv("FFC_ASSUMPTIONS_PATH", str(DEFAULT_ASSUMPTIONS_PATH))),
+            assumptions_cache_ttl_days=int(os.getenv("FFC_ASSUMPTIONS_CACHE_TTL_DAYS", "1")),
             default_user_id=os.getenv("FFC_DEFAULT_USER_ID", "anonymous"),
             scenario_list_default_limit=int(os.getenv("FFC_SCENARIO_LIST_DEFAULT_LIMIT", "25")),
             scenario_list_max_limit=int(os.getenv("FFC_SCENARIO_LIST_MAX_LIMIT", "100")),

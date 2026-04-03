@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import StrictInt
 
-from .models import FilingStatus, HousingStatus, IncomeStability, LossBehavior, RiskProfile, UserScenarioInput
+from .models import AssumptionOverrides, FilingStatus, HousingStatus, IncomeStability, LossBehavior, RiskProfile, UserScenarioInput
 
 
 class RentVsBuyInputModel(BaseModel):
@@ -36,11 +36,30 @@ class RentVsBuyInputModel(BaseModel):
         return UserScenarioInput(**self.model_dump())
 
 
+class AssumptionOverrideModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mortgage_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    property_tax_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    annual_home_insurance_cents: StrictInt | None = Field(default=None, ge=0)
+    annual_rent_growth_rate: float | None = Field(default=None, gt=-1.0, le=1.0)
+    maintenance_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    selling_cost_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    annual_pmi_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    buyer_closing_cost_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    def to_domain(self) -> AssumptionOverrides:
+        return AssumptionOverrides(**self.model_dump())
+
+
 class AnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: RentVsBuyInputModel
     simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumption_overrides: AssumptionOverrideModel | None = None
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
 
 
 class CreateScenarioRequest(AnalyzeRequest):
@@ -87,6 +106,19 @@ class HealthEnvelope(BaseModel):
     model_version: str
     scenario_store: str
     assumptions_path: str
+    assumptions_source: str | None = None
+    assumptions_cache_date: str | None = None
+
+
+class CurrentAssumptionsEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_version: str
+    disclaimer: str
+    source: str
+    cache_date: str
+    assumptions: dict[str, Any]
+    audit_trail: list[dict[str, Any]]
 
 
 class ScenarioListEnvelope(BaseModel):

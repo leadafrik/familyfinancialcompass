@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from .assumptions import InMemoryAssumptionStore, apply_assumption_overrides
+from .config import AssumptionBundle, assumption_bundle_from_payload
 from .legal import OUTPUT_DISCLAIMER
-from .models import RentVsBuyAnalysis, UserScenarioInput
+from .models import AssumptionOverrides, RentVsBuyAnalysis, UserScenarioInput
 from .reporting import build_rent_vs_buy_report
 from .rent_vs_buy import RentVsBuyEngine
 from .repository import ScenarioBundle, ScenarioPage, ScenarioRepository
@@ -11,17 +13,26 @@ from .scenario import create_saved_scenario, serialize_model
 class FamilyFinancialCompassService:
     def __init__(
         self,
-        engine: RentVsBuyEngine,
         repository: ScenarioRepository,
-        audit_trail: list | tuple,
+        assumption_store=None,
+        engine: RentVsBuyEngine | None = None,
+        audit_trail: list | tuple = (),
         default_user_id: str = "anonymous",
         groq_api_key: str | None = None,
         groq_model: str = "openai/gpt-oss-20b",
         groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions",
     ):
-        self.engine = engine
         self.repository = repository
-        self.audit_trail = list(audit_trail)
+        if assumption_store is None:
+            if engine is None:
+                raise ValueError("Either assumption_store or engine must be provided.")
+            assumption_store = InMemoryAssumptionStore(
+                AssumptionBundle(
+                    assumptions=engine.assumptions,
+                    audit_trail=tuple(audit_trail),
+                )
+            )
+        self.assumption_store = assumption_store
         self.default_user_id = default_user_id
         self.groq_api_key = groq_api_key
         self.groq_model = groq_model
@@ -29,31 +40,100 @@ class FamilyFinancialCompassService:
 
     @property
     def model_version(self) -> str:
-        return self.engine.assumptions.model_version
+        return self.assumption_store.get_current_bundle().bundle.assumptions.model_version
 
-    def analyze_rent_vs_buy(self, user_inputs: UserScenarioInput, seed: int = 7) -> RentVsBuyAnalysis:
-        return self.engine.analyze(user_inputs, audit_trail=list(self.audit_trail), seed=seed)
+    def _resolve_bundle(
+        self,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ):
+        if assumptions_snapshot is not None:
+            payload = dict(assumptions_snapshot)
+            payload["audit_trail"] = list(audit_trail_snapshot or [])
+            bundle = assumption_bundle_from_payload(payload)
+            return None, apply_assumption_overrides(bundle, assumption_overrides)
 
-    def analyze_rent_vs_buy_payload(self, user_inputs: UserScenarioInput, seed: int = 7) -> dict:
-        analysis = self.analyze_rent_vs_buy(user_inputs, seed=seed)
+        loaded = self.assumption_store.get_current_bundle()
+        bundle = apply_assumption_overrides(loaded.bundle, assumption_overrides)
+        return loaded, bundle
+
+    def _resolve_engine(
+        self,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> tuple[RentVsBuyEngine, list, AssumptionBundle]:
+        _, bundle = self._resolve_bundle(
+            assumption_overrides,
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        return RentVsBuyEngine(bundle.assumptions), list(bundle.audit_trail), bundle
+
+    def analyze_rent_vs_buy(
+        self,
+        user_inputs: UserScenarioInput,
+        seed: int = 7,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> RentVsBuyAnalysis:
+        engine, audit_trail, _ = self._resolve_engine(
+            assumption_overrides,
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        return engine.analyze(user_inputs, audit_trail=audit_trail, seed=seed)
+
+    def analyze_rent_vs_buy_payload(
+        self,
+        user_inputs: UserScenarioInput,
+        seed: int = 7,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumption_overrides,
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = RentVsBuyEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
         return {
-            "model_version": self.model_version,
+            "model_version": bundle.assumptions.model_version,
             "disclaimer": OUTPUT_DISCLAIMER,
             "analysis": serialize_model(analysis),
         }
 
-    def build_rent_vs_buy_report_payload(self, user_inputs: UserScenarioInput, seed: int = 7) -> dict:
+    def build_rent_vs_buy_report_payload(
+        self,
+        user_inputs: UserScenarioInput,
+        seed: int = 7,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        engine, audit_trail, bundle = self._resolve_engine(
+            assumption_overrides,
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
         report = build_rent_vs_buy_report(
-            engine=self.engine,
+            engine=engine,
             user_inputs=user_inputs,
-            audit_trail=list(self.audit_trail),
+            audit_trail=audit_trail,
             seed=seed,
             groq_api_key=self.groq_api_key,
             groq_model=self.groq_model,
             groq_base_url=self.groq_base_url,
         )
         return {
-            "model_version": self.model_version,
+            "model_version": bundle.assumptions.model_version,
             "disclaimer": OUTPUT_DISCLAIMER,
             "report": serialize_model(report),
         }
@@ -64,17 +144,40 @@ class FamilyFinancialCompassService:
         user_id: str | None = None,
         seed: int = 7,
         idempotency_key: str | None = None,
+        assumption_overrides: AssumptionOverrides | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
     ) -> ScenarioBundle:
         resolved_user_id = user_id or self.default_user_id
-        analysis = self.analyze_rent_vs_buy(user_inputs, seed=seed)
+        engine, audit_trail, bundle = self._resolve_engine(
+            assumption_overrides,
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = engine.analyze(
+            user_inputs,
+            audit_trail=audit_trail,
+            seed=seed,
+        )
         scenario, output = create_saved_scenario(
             user_id=resolved_user_id,
             user_inputs=user_inputs,
-            system_assumptions=self.engine.assumptions,
+            system_assumptions=bundle.assumptions,
             analysis=analysis,
             idempotency_key=idempotency_key,
         )
         return self.repository.save(scenario, output)
+
+    def current_assumptions_payload(self) -> dict:
+        loaded = self.assumption_store.get_current_bundle()
+        return {
+            "model_version": loaded.bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "source": loaded.source,
+            "cache_date": loaded.cache_date.isoformat(),
+            "assumptions": serialize_model(loaded.bundle.assumptions),
+            "audit_trail": serialize_model(list(loaded.bundle.audit_trail)),
+        }
 
     def get_scenario(self, scenario_id: str) -> ScenarioBundle | None:
         return self.repository.get(scenario_id)
