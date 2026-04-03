@@ -6,7 +6,18 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import StrictInt
 
-from .models import AssumptionOverrides, FilingStatus, HousingStatus, IncomeStability, LossBehavior, RetirementScenarioInput, RiskProfile, UserScenarioInput
+from .models import (
+    AssumptionOverrides,
+    FilingStatus,
+    HousingStatus,
+    IncomeStability,
+    JobOffer,
+    JobOfferScenarioInput,
+    LossBehavior,
+    RetirementScenarioInput,
+    RiskProfile,
+    UserScenarioInput,
+)
 
 
 class RentVsBuyInputModel(BaseModel):
@@ -88,6 +99,55 @@ class RetirementAnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: RetirementInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
+
+
+class JobOfferModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=80)
+    base_salary_cents: StrictInt = Field(ge=0)
+    target_bonus_cents: StrictInt = Field(default=0, ge=0)
+    annual_equity_vesting_cents: StrictInt = Field(default=0, ge=0)
+    sign_on_bonus_cents: StrictInt = Field(default=0, ge=0)
+    relocation_cost_cents: StrictInt = Field(default=0, ge=0)
+    annual_cost_of_living_delta_cents: StrictInt = Field(default=0, ge=0)
+    annual_commute_cost_cents: StrictInt = Field(default=0, ge=0)
+    annual_comp_growth_rate: float = Field(default=0.03, gt=-1.0, le=1.0)
+    annual_equity_growth_rate: float = Field(default=0.0, gt=-1.0, le=1.0)
+    bonus_payout_volatility: float = Field(default=0.20, ge=0.0, le=3.0)
+    equity_volatility: float = Field(default=0.60, ge=0.0, le=3.0)
+
+    def to_domain(self) -> JobOffer:
+        return JobOffer(**self.model_dump())
+
+
+class JobOfferAnalyzeInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    offer_a: JobOfferModel
+    offer_b: JobOfferModel
+    comparison_years: StrictInt = Field(default=4, gt=0, le=10)
+    marginal_tax_rate: float = Field(default=0.24, ge=0.0, le=0.60)
+    local_market_concentration: bool = False
+
+    def to_domain(self) -> JobOfferScenarioInput:
+        payload = self.model_dump()
+        return JobOfferScenarioInput(
+            offer_a=self.offer_a.to_domain(),
+            offer_b=self.offer_b.to_domain(),
+            comparison_years=payload["comparison_years"],
+            marginal_tax_rate=payload["marginal_tax_rate"],
+            local_market_concentration=payload["local_market_concentration"],
+        )
+
+
+class JobOfferAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: JobOfferAnalyzeInputModel
     simulation_seed: StrictInt = Field(default=7, ge=0)
     assumptions_snapshot: dict[str, Any] | None = None
     audit_trail_snapshot: list[dict[str, Any]] | None = None

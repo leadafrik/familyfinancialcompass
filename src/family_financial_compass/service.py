@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from .assumptions import InMemoryAssumptionStore, apply_assumption_overrides
 from .config import AssumptionBundle, assumption_bundle_from_payload
+from .job_offer import JobOfferEngine
 from .legal import OUTPUT_DISCLAIMER
-from .models import AssumptionOverrides, RetirementScenarioInput, RetirementSurvivalAnalysis, RentVsBuyAnalysis, UserScenarioInput
+from .models import (
+    AssumptionOverrides,
+    JobOfferAnalysis,
+    JobOfferScenarioInput,
+    RetirementScenarioInput,
+    RetirementSurvivalAnalysis,
+    RentVsBuyAnalysis,
+    UserScenarioInput,
+)
 from .reporting import build_rent_vs_buy_report
 from .retirement_survival import RetirementSurvivalEngine
 from .rent_vs_buy import RentVsBuyEngine
@@ -137,6 +146,42 @@ class FamilyFinancialCompassService:
             audit_trail_snapshot=audit_trail_snapshot,
         )
         analysis = RetirementSurvivalEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "analysis": serialize_model(analysis),
+        }
+
+    def analyze_job_offer(
+        self,
+        user_inputs: JobOfferScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> JobOfferAnalysis:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        engine = JobOfferEngine(bundle.assumptions)
+        return engine.analyze(user_inputs, audit_trail=list(bundle.audit_trail), seed=seed)
+
+    def analyze_job_offer_payload(
+        self,
+        user_inputs: JobOfferScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = JobOfferEngine(bundle.assumptions).analyze(
             user_inputs,
             audit_trail=list(bundle.audit_trail),
             seed=seed,

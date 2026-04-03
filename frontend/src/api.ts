@@ -3,6 +3,8 @@ import type {
   AnalyzeRequestPayload,
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
+  JobOfferAnalysisEnvelope,
+  JobOfferInputPayload,
   ReportEnvelope,
   RetirementAnalysisEnvelope,
   RetirementInputPayload,
@@ -43,6 +45,16 @@ export function analyzeRetirementSurvival(payload: {
   simulation_seed: number;
 }): Promise<RetirementAnalysisEnvelope> {
   return request<RetirementAnalysisEnvelope>("/v1/retirement-survival/analyze", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function analyzeJobOffer(payload: {
+  input: JobOfferInputPayload;
+  simulation_seed: number;
+}): Promise<JobOfferAnalysisEnvelope> {
+  return request<JobOfferAnalysisEnvelope>("/v1/job-offer/analyze", {
     method: "POST",
     body: JSON.stringify(payload),
   });

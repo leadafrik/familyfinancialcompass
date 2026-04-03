@@ -36,6 +36,29 @@ export interface RetirementInputPayload {
   loss_behavior: LossBehavior;
 }
 
+export interface JobOfferOfferPayload {
+  label: string;
+  base_salary_cents: number;
+  target_bonus_cents: number;
+  annual_equity_vesting_cents: number;
+  sign_on_bonus_cents: number;
+  relocation_cost_cents: number;
+  annual_cost_of_living_delta_cents: number;
+  annual_commute_cost_cents: number;
+  annual_comp_growth_rate: number;
+  annual_equity_growth_rate: number;
+  bonus_payout_volatility: number;
+  equity_volatility: number;
+}
+
+export interface JobOfferInputPayload {
+  offer_a: JobOfferOfferPayload;
+  offer_b: JobOfferOfferPayload;
+  comparison_years: number;
+  marginal_tax_rate: number;
+  local_market_concentration: boolean;
+}
+
 export interface AssumptionOverridesPayload {
   mortgage_rate?: number;
   property_tax_rate?: number;
@@ -177,6 +200,45 @@ export interface RetirementAnalysisEnvelope {
   model_version: string;
   disclaimer: string;
   analysis: RetirementAnalysis;
+}
+
+export interface JobOfferYearComparisonRow {
+  year: number;
+  offer_a_annual_net_value_cents: number;
+  offer_b_annual_net_value_cents: number;
+  offer_a_cumulative_value_cents: number;
+  offer_b_cumulative_value_cents: number;
+  offer_b_minus_offer_a_cents: number;
+}
+
+export interface JobOfferDeterministicSummary {
+  break_even_month: number | null;
+  end_of_horizon_advantage_cents: number;
+  yearly_rows: JobOfferYearComparisonRow[];
+}
+
+export interface JobOfferMonteCarloSummary {
+  scenario_count: number;
+  probability_offer_b_wins: number;
+  probability_break_even_within_horizon: number;
+  median_break_even_month: number | null;
+  median_terminal_advantage_cents: number;
+  p10_terminal_advantage_cents: number;
+  p90_terminal_advantage_cents: number;
+  utility_adjusted_p50_advantage_cents: number;
+}
+
+export interface JobOfferAnalysis {
+  deterministic: JobOfferDeterministicSummary;
+  monte_carlo: JobOfferMonteCarloSummary;
+  audit_trail: AuditTrailItem[];
+  warnings: string[];
+}
+
+export interface JobOfferAnalysisEnvelope {
+  model_version: string;
+  disclaimer: string;
+  analysis: JobOfferAnalysis;
 }
 
 export interface ReportInputsSummaryRow {
@@ -385,4 +447,27 @@ export interface RetirementFormState {
   expectedAnnualReturn: string;
   riskProfile: RiskProfile;
   lossBehavior: LossBehavior;
+}
+
+export interface JobOfferFormSideState {
+  label: string;
+  baseSalary: string;
+  targetBonus: string;
+  annualEquityVesting: string;
+  signOnBonus: string;
+  relocationCost: string;
+  annualCostOfLivingDelta: string;
+  annualCommuteCost: string;
+  annualCompGrowthRate: string;
+  annualEquityGrowthRate: string;
+  bonusPayoutVolatility: string;
+  equityVolatility: string;
+}
+
+export interface JobOfferFormState {
+  offerA: JobOfferFormSideState;
+  offerB: JobOfferFormSideState;
+  comparisonYears: string;
+  marginalTaxRate: string;
+  localMarketConcentration: boolean;
 }

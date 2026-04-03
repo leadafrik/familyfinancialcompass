@@ -13,6 +13,7 @@ from .api_models import (
     CreateScenarioRequest,
     CurrentAssumptionsEnvelope,
     HealthEnvelope,
+    JobOfferAnalyzeRequest,
     RetirementAnalyzeRequest,
     ReportEnvelope,
     ScenarioEnvelope,
@@ -131,6 +132,16 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     @app.post("/v1/retirement-survival/analyze", response_model=AnalysisEnvelope)
     async def analyze_retirement_survival(request: RetirementAnalyzeRequest) -> AnalysisEnvelope:
         payload = service.analyze_retirement_survival_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return AnalysisEnvelope(**payload)
+
+    @app.post("/v1/job-offer/analyze", response_model=AnalysisEnvelope)
+    async def analyze_job_offer(request: JobOfferAnalyzeRequest) -> AnalysisEnvelope:
+        payload = service.analyze_job_offer_payload(
             request.input.to_domain(),
             seed=request.simulation_seed,
             assumptions_snapshot=request.assumptions_snapshot,

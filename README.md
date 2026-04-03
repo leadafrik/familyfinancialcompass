@@ -56,6 +56,7 @@ Endpoints:
 - `GET /v1/rent-vs-buy/assumptions/current`
 - `POST /v1/rent-vs-buy/analyze`
 - `POST /v1/retirement-survival/analyze`
+- `POST /v1/job-offer/analyze`
 - `POST /v1/rent-vs-buy/report`
 - `POST /v1/rent-vs-buy/scenarios`
 - `GET /v1/scenarios/{scenario_id}`
@@ -112,6 +113,6 @@ Current product shape:
 
 - `Rent vs Buy`: live end-to-end through the API
 - `Retirement Survival`: live analysis engine
-- `Job Offer & Relocation`: queued
+- `Job Offer & Relocation`: live analysis engine
 - `College vs Retirement`: queued
 - `Debt Payoff vs Invest`: queued

@@ -437,6 +437,104 @@ class RetirementSurvivalAnalysis:
 
 
 @dataclass(frozen=True)
+class JobOffer:
+    label: str
+    base_salary_cents: int
+    target_bonus_cents: int = 0
+    annual_equity_vesting_cents: int = 0
+    sign_on_bonus_cents: int = 0
+    relocation_cost_cents: int = 0
+    annual_cost_of_living_delta_cents: int = 0
+    annual_commute_cost_cents: int = 0
+    annual_comp_growth_rate: float = 0.03
+    annual_equity_growth_rate: float = 0.0
+    bonus_payout_volatility: float = 0.20
+    equity_volatility: float = 0.60
+
+    def __post_init__(self) -> None:
+        if not self.label.strip():
+            raise ValueError("label must not be empty.")
+        non_negative_values = {
+            "base_salary_cents": self.base_salary_cents,
+            "target_bonus_cents": self.target_bonus_cents,
+            "annual_equity_vesting_cents": self.annual_equity_vesting_cents,
+            "sign_on_bonus_cents": self.sign_on_bonus_cents,
+            "relocation_cost_cents": self.relocation_cost_cents,
+            "annual_cost_of_living_delta_cents": self.annual_cost_of_living_delta_cents,
+            "annual_commute_cost_cents": self.annual_commute_cost_cents,
+        }
+        for name, value in non_negative_values.items():
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative.")
+        bounded_rates = {
+            "annual_comp_growth_rate": self.annual_comp_growth_rate,
+            "annual_equity_growth_rate": self.annual_equity_growth_rate,
+        }
+        for name, value in bounded_rates.items():
+            if value <= -1.0 or value > 1.0:
+                raise ValueError(f"{name} must be greater than -1 and no more than 1.")
+        bounded_volatilities = {
+            "bonus_payout_volatility": self.bonus_payout_volatility,
+            "equity_volatility": self.equity_volatility,
+        }
+        for name, value in bounded_volatilities.items():
+            if not 0.0 <= value <= 3.0:
+                raise ValueError(f"{name} must be between 0 and 3.")
+
+
+@dataclass(frozen=True)
+class JobOfferScenarioInput:
+    offer_a: JobOffer
+    offer_b: JobOffer
+    comparison_years: int = 4
+    marginal_tax_rate: float = 0.24
+    local_market_concentration: bool = False
+
+    def __post_init__(self) -> None:
+        if self.comparison_years <= 0:
+            raise ValueError("comparison_years must be positive.")
+        if not 0.0 <= self.marginal_tax_rate <= 0.60:
+            raise ValueError("marginal_tax_rate must be between 0.0 and 0.60.")
+
+
+@dataclass(frozen=True)
+class JobOfferYearComparisonRow:
+    year: int
+    offer_a_annual_net_value_cents: int
+    offer_b_annual_net_value_cents: int
+    offer_a_cumulative_value_cents: int
+    offer_b_cumulative_value_cents: int
+    offer_b_minus_offer_a_cents: int
+
+
+@dataclass(frozen=True)
+class JobOfferDeterministicSummary:
+    break_even_month: int | None
+    end_of_horizon_advantage_cents: int
+    yearly_rows: tuple[JobOfferYearComparisonRow, ...]
+
+
+@dataclass(frozen=True)
+class JobOfferMonteCarloSummary:
+    scenario_count: int
+    probability_offer_b_wins: float
+    probability_break_even_within_horizon: float
+    median_break_even_month: int | None
+    median_terminal_advantage_cents: int
+    p10_terminal_advantage_cents: int
+    p90_terminal_advantage_cents: int
+    utility_adjusted_p50_advantage_cents: int
+
+
+@dataclass(frozen=True)
+class JobOfferAnalysis:
+    deterministic: JobOfferDeterministicSummary
+    monte_carlo: JobOfferMonteCarloSummary
+    audit_trail: list[AssumptionAuditItem]
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class ScenarioRecord:
     id: str
     user_id: str

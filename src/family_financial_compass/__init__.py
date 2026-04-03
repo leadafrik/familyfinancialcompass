@@ -6,12 +6,16 @@ from .assumptions import (
 )
 from .config import DEFAULT_SYSTEM_ASSUMPTIONS, MODEL_VERSION
 from .db import InMemoryScenarioRepository, ScenarioRepository
+from .job_offer import JobOfferEngine
 from .models import (
     AssumptionOverrides,
     AssumptionAuditItem,
     FilingStatus,
     HousingStatus,
     IncomeStability,
+    JobOffer,
+    JobOfferAnalysis,
+    JobOfferScenarioInput,
     LossBehavior,
     RetirementScenarioInput,
     RetirementSurvivalAnalysis,
@@ -46,6 +50,10 @@ __all__ = [
     "InMemoryAssumptionStore",
     "IncomeStability",
     "InMemoryScenarioRepository",
+    "JobOffer",
+    "JobOfferAnalysis",
+    "JobOfferEngine",
+    "JobOfferScenarioInput",
     "LossBehavior",
     "MODEL_VERSION",
     "FamilyFinancialCompassService",

@@ -2,6 +2,7 @@ import { startTransition, useEffect, useState } from "react";
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
 
 import {
+  analyzeJobOffer,
   analyzeRetirementSurvival,
   analyzeRentVsBuy,
   buildRentVsBuyReport,
@@ -17,6 +18,12 @@ import type {
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   FormState,
+  JobOfferAnalysis,
+  JobOfferAnalysisEnvelope,
+  JobOfferFormSideState,
+  JobOfferFormState,
+  JobOfferInputPayload,
+  JobOfferYearComparisonRow,
   RetirementAnalysis,
   RetirementAnalysisEnvelope,
   RetirementFormState,
@@ -57,7 +64,7 @@ const modules: Array<{
   {
     id: "job-offer",
     label: "Job Offer",
-    status: "queued",
+    status: "live",
     description: "Cash compensation, equity uncertainty, and relocation tradeoffs.",
   },
   {
@@ -116,6 +123,40 @@ const defaultRetirementFormState: RetirementFormState = {
   expectedAnnualReturn: "6.0",
   riskProfile: "moderate",
   lossBehavior: "hold",
+};
+
+const defaultJobOfferFormState: JobOfferFormState = {
+  offerA: {
+    label: "Current role",
+    baseSalary: "160000",
+    targetBonus: "20000",
+    annualEquityVesting: "0",
+    signOnBonus: "0",
+    relocationCost: "0",
+    annualCostOfLivingDelta: "0",
+    annualCommuteCost: "3000",
+    annualCompGrowthRate: "3.0",
+    annualEquityGrowthRate: "0.0",
+    bonusPayoutVolatility: "10",
+    equityVolatility: "0",
+  },
+  offerB: {
+    label: "New role",
+    baseSalary: "190000",
+    targetBonus: "30000",
+    annualEquityVesting: "25000",
+    signOnBonus: "20000",
+    relocationCost: "15000",
+    annualCostOfLivingDelta: "18000",
+    annualCommuteCost: "5000",
+    annualCompGrowthRate: "3.5",
+    annualEquityGrowthRate: "0.0",
+    bonusPayoutVolatility: "25",
+    equityVolatility: "60",
+  },
+  comparisonYears: "4",
+  marginalTaxRate: "30",
+  localMarketConcentration: true,
 };
 
 type AssumptionBaseline = {
@@ -195,6 +236,33 @@ function buildRetirementPayload(form: RetirementFormState): RetirementInputPaylo
     expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
     risk_profile: form.riskProfile,
     loss_behavior: form.lossBehavior,
+  };
+}
+
+function buildJobOfferSidePayload(form: JobOfferFormSideState) {
+  return {
+    label: form.label,
+    base_salary_cents: dollarsToCents(form.baseSalary),
+    target_bonus_cents: dollarsToCents(form.targetBonus),
+    annual_equity_vesting_cents: dollarsToCents(form.annualEquityVesting),
+    sign_on_bonus_cents: dollarsToCents(form.signOnBonus),
+    relocation_cost_cents: dollarsToCents(form.relocationCost),
+    annual_cost_of_living_delta_cents: dollarsToCents(form.annualCostOfLivingDelta),
+    annual_commute_cost_cents: dollarsToCents(form.annualCommuteCost),
+    annual_comp_growth_rate: percentToRate(form.annualCompGrowthRate),
+    annual_equity_growth_rate: percentToRate(form.annualEquityGrowthRate),
+    bonus_payout_volatility: percentToRate(form.bonusPayoutVolatility),
+    equity_volatility: percentToRate(form.equityVolatility),
+  };
+}
+
+function buildJobOfferPayload(form: JobOfferFormState): JobOfferInputPayload {
+  return {
+    offer_a: buildJobOfferSidePayload(form.offerA),
+    offer_b: buildJobOfferSidePayload(form.offerB),
+    comparison_years: Number(form.comparisonYears),
+    marginal_tax_rate: percentToRate(form.marginalTaxRate),
+    local_market_concentration: form.localMarketConcentration,
   };
 }
 
@@ -465,6 +533,7 @@ function App() {
   const [retirementForm, setRetirementForm] = useState<RetirementFormState>(
     defaultRetirementFormState,
   );
+  const [jobOfferForm, setJobOfferForm] = useState<JobOfferFormState>(defaultJobOfferFormState);
   const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionFormState);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
@@ -472,6 +541,8 @@ function App() {
   const [analysisEnvelope, setAnalysisEnvelope] = useState<AnalysisEnvelope | null>(null);
   const [retirementAnalysisEnvelope, setRetirementAnalysisEnvelope] =
     useState<RetirementAnalysisEnvelope | null>(null);
+  const [jobOfferAnalysisEnvelope, setJobOfferAnalysisEnvelope] =
+    useState<JobOfferAnalysisEnvelope | null>(null);
   const [currentAssumptions, setCurrentAssumptions] = useState<CurrentAssumptionsEnvelope | null>(null);
   const [savedScenarios, setSavedScenarios] = useState<ScenarioEnvelope[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
@@ -535,6 +606,7 @@ function App() {
     scenarioToBaseline(selectedScenario) ?? currentAssumptionsToBaseline(currentAssumptions);
   const activeAnalysis = selectedScenario?.analysis ?? analysisEnvelope?.analysis ?? null;
   const activeRetirementAnalysis = retirementAnalysisEnvelope?.analysis ?? null;
+  const activeJobOfferAnalysis = jobOfferAnalysisEnvelope?.analysis ?? null;
   const activeModelVersion =
     selectedScenario?.model_version ?? analysisEnvelope?.model_version ?? null;
   const costBreakdown = activeAnalysis?.deterministic.first_year_cost_breakdown ?? null;
@@ -569,6 +641,23 @@ function App() {
         simulation_seed: 7,
       });
       startTransition(() => setRetirementAnalysisEnvelope(response));
+    } catch (e: unknown) {
+      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  async function handleJobOfferAnalyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAnalysisError(null);
+    setIsAnalyzing(true);
+    try {
+      const response = await analyzeJobOffer({
+        input: buildJobOfferPayload(jobOfferForm),
+        simulation_seed: 7,
+      });
+      startTransition(() => setJobOfferAnalysisEnvelope(response));
     } catch (e: unknown) {
       setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
     } finally {
@@ -1036,6 +1125,16 @@ function App() {
             analysisError={analysisError}
             onAnalyze={handleRetirementAnalyze}
           />
+        ) : activeModule === "job-offer" ? (
+          <JobOfferLayout
+            form={jobOfferForm}
+            setForm={setJobOfferForm}
+            analysis={activeJobOfferAnalysis}
+            modelVersion={jobOfferAnalysisEnvelope?.model_version ?? null}
+            isAnalyzing={isAnalyzing}
+            analysisError={analysisError}
+            onAnalyze={handleJobOfferAnalyze}
+          />
         ) : (
           <section className="panel panel--placeholder">
             <div className="panel__header">
@@ -1046,7 +1145,7 @@ function App() {
               <p>{activeModuleMeta.description}</p>
             </div>
             <div className="empty-state">
-              <p>This engine is in the queue. Next build is Retirement Survival.</p>
+              <p>This engine is in the queue.</p>
             </div>
           </section>
         )}
@@ -1255,6 +1354,328 @@ function RetirementProjectionTableRow({ row }: { row: RetirementYearProjectionRo
       <td>{formatCurrency(row.p90_portfolio_cents)}</td>
       <td>{formatPercent(row.cumulative_depletion_probability)}</td>
     </tr>
+  );
+}
+
+function JobOfferLayout({
+  form,
+  setForm,
+  analysis,
+  modelVersion,
+  isAnalyzing,
+  analysisError,
+  onAnalyze,
+}: {
+  form: JobOfferFormState;
+  setForm: Dispatch<SetStateAction<JobOfferFormState>>;
+  analysis: JobOfferAnalysis | null;
+  modelVersion: string | null;
+  isAnalyzing: boolean;
+  analysisError: string | null;
+  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+}) {
+  const updateSide = (side: "offerA" | "offerB", field: keyof JobOfferFormSideState, value: string) => {
+    setForm((current) => ({
+      ...current,
+      [side]: {
+        ...current[side],
+        [field]: value,
+      },
+    }));
+  };
+
+  return (
+    <div className="rent-layout">
+      <section className="panel">
+        <div className="panel__header">
+          <div>
+            <span className="panel__eyebrow">Inputs</span>
+            <h3>Offer comparison</h3>
+          </div>
+          <p>Two offers, one horizon, one tax rate, and the real friction of moving.</p>
+        </div>
+
+        <form className="form-grid" onSubmit={onAnalyze}>
+          <p className="form-section-label">Comparison frame</p>
+          <div className="form-two-col">
+            <JobOfferNumberField
+              label="Decision horizon"
+              value={form.comparisonYears}
+              onChange={(value) => setForm((current) => ({ ...current, comparisonYears: value }))}
+              suffix="yrs"
+            />
+            <JobOfferNumberField
+              label="Marginal tax rate"
+              value={form.marginalTaxRate}
+              onChange={(value) => setForm((current) => ({ ...current, marginalTaxRate: value }))}
+              suffix="%"
+              step={1}
+            />
+          </div>
+          <SelectField
+            label="Human-capital concentration"
+            value={form.localMarketConcentration ? "yes" : "no"}
+            onChange={(value) =>
+              setForm((current) => ({
+                ...current,
+                localMarketConcentration: value === "yes",
+              }))
+            }
+            options={[
+              { value: "no", label: "No — labor market is diversified" },
+              { value: "yes", label: "Yes — income is tied to one company/market" },
+            ]}
+          />
+
+          <div className="form-two-col" style={{ alignItems: "start" }}>
+            <JobOfferSideFields
+              title="Offer A"
+              value={form.offerA}
+              onChange={(field, value) => updateSide("offerA", field, value)}
+            />
+            <JobOfferSideFields
+              title="Offer B"
+              value={form.offerB}
+              onChange={(field, value) => updateSide("offerB", field, value)}
+            />
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
+              {isAnalyzing ? "Running offer simulation…" : "Run analysis"}
+            </button>
+          </div>
+          {analysisError && <p className="message message--error">{analysisError}</p>}
+        </form>
+      </section>
+
+      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
+        {analysis === null ? (
+          <EmptyOutput loading={isAnalyzing} />
+        ) : (
+          <JobOfferOutputPanel
+            analysis={analysis}
+            modelVersion={modelVersion}
+            offerALabel={form.offerA.label}
+            offerBLabel={form.offerB.label}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function JobOfferSideFields({
+  title,
+  value,
+  onChange,
+}: {
+  title: string;
+  value: JobOfferFormSideState;
+  onChange: (field: keyof JobOfferFormSideState, value: string) => void;
+}) {
+  return (
+    <div className="assumption-card">
+      <div className="assumption-card__header">
+        <div>
+          <strong>{title}</strong>
+          <p>Cash comp, equity, and the cost of actually taking the job.</p>
+        </div>
+      </div>
+      <div className="form-grid">
+        <JobOfferTextField label="Label" value={value.label} onChange={(next) => onChange("label", next)} />
+        <JobOfferNumberField label="Base salary" value={value.baseSalary} onChange={(next) => onChange("baseSalary", next)} suffix="USD" />
+        <JobOfferNumberField label="Annual bonus" value={value.targetBonus} onChange={(next) => onChange("targetBonus", next)} suffix="USD" />
+        <JobOfferNumberField label="Annual equity vesting" value={value.annualEquityVesting} onChange={(next) => onChange("annualEquityVesting", next)} suffix="USD" />
+        <div className="form-two-col">
+          <JobOfferNumberField label="Sign-on" value={value.signOnBonus} onChange={(next) => onChange("signOnBonus", next)} suffix="USD" />
+          <JobOfferNumberField label="Relocation cost" value={value.relocationCost} onChange={(next) => onChange("relocationCost", next)} suffix="USD" />
+        </div>
+        <div className="form-two-col">
+          <JobOfferNumberField label="Extra annual living cost" value={value.annualCostOfLivingDelta} onChange={(next) => onChange("annualCostOfLivingDelta", next)} suffix="USD" />
+          <JobOfferNumberField label="Annual commute cost" value={value.annualCommuteCost} onChange={(next) => onChange("annualCommuteCost", next)} suffix="USD" />
+        </div>
+        <div className="form-two-col">
+          <JobOfferNumberField label="Comp growth" value={value.annualCompGrowthRate} onChange={(next) => onChange("annualCompGrowthRate", next)} suffix="%/yr" step={0.1} />
+          <JobOfferNumberField label="Equity growth" value={value.annualEquityGrowthRate} onChange={(next) => onChange("annualEquityGrowthRate", next)} suffix="%/yr" step={0.1} />
+        </div>
+        <div className="form-two-col">
+          <JobOfferNumberField label="Bonus volatility" value={value.bonusPayoutVolatility} onChange={(next) => onChange("bonusPayoutVolatility", next)} suffix="%" step={1} />
+          <JobOfferNumberField label="Equity volatility" value={value.equityVolatility} onChange={(next) => onChange("equityVolatility", next)} suffix="%" step={1} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function JobOfferOutputPanel({
+  analysis,
+  modelVersion,
+  offerALabel,
+  offerBLabel,
+}: {
+  analysis: JobOfferAnalysis;
+  modelVersion: string | null;
+  offerALabel: string;
+  offerBLabel: string;
+}) {
+  const det = analysis.deterministic;
+  const mc = analysis.monte_carlo;
+  const probability = mc.probability_offer_b_wins;
+  const offerBWins = probability >= 0.55;
+  const offerAWins = probability <= 0.45;
+  const verdictLabel = offerBWins
+    ? `${offerBLabel} is stronger`
+    : offerAWins
+      ? `${offerALabel} is stronger`
+      : "This is a close call";
+  const verdictHeadline = offerBWins
+    ? `${offerBLabel} beats ${offerALabel} in ${formatPercent(probability)} of simulated compensation paths.`
+    : offerAWins
+      ? `${offerALabel} beats ${offerBLabel} in ${formatPercent(1 - probability)} of simulated compensation paths.`
+      : `${offerBLabel} wins ${formatPercent(probability)} of paths, which is not enough separation to treat as decisive.`;
+
+  return (
+    <div>
+      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
+        <div>
+          <span className="panel__eyebrow">Output</span>
+          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
+            Job offer comparison
+          </h3>
+        </div>
+        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
+      </div>
+
+      <div
+        className="verdict-card"
+        style={{
+          background: offerBWins ? "rgba(36, 71, 55, 0.06)" : offerAWins ? "rgba(140, 47, 61, 0.06)" : "var(--surface-soft)",
+          border: offerBWins ? "1px solid rgba(36, 71, 55, 0.18)" : offerAWins ? "1px solid rgba(140, 47, 61, 0.18)" : "1px solid rgba(23, 34, 29, 0.12)",
+        }}
+      >
+        <p className="verdict-card__eyebrow" style={{ color: offerBWins ? "var(--accent)" : offerAWins ? "var(--danger)" : "var(--muted)" }}>
+          {verdictLabel}
+        </p>
+        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
+          {verdictHeadline}
+        </p>
+        <p className="verdict-card__sub">
+          {det.break_even_month !== null
+            ? `${offerBLabel} recovers its upfront friction by month ${det.break_even_month}.`
+            : `${offerBLabel} does not recover its upfront friction inside the selected horizon.`}
+          {mc.median_break_even_month !== null
+            ? ` Across simulations, median break-even is month ${mc.median_break_even_month}.`
+            : ""}
+        </p>
+      </div>
+
+      <div className="summary-grid output-section">
+        <div className="summary-card">
+          <span>{offerBLabel} wins</span>
+          <strong>{formatPercent(probability)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Median advantage</span>
+          <strong style={{ color: mc.median_terminal_advantage_cents >= 0 ? "var(--accent)" : "var(--danger)" }}>
+            {formatCurrency(mc.median_terminal_advantage_cents)}
+          </strong>
+        </div>
+        <div className="summary-card">
+          <span>Downside</span>
+          <strong style={{ color: "var(--danger)" }}>{formatCurrency(mc.p10_terminal_advantage_cents)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Upside</span>
+          <strong style={{ color: "var(--accent)" }}>{formatCurrency(mc.p90_terminal_advantage_cents)}</strong>
+        </div>
+      </div>
+
+      <div className="detail-card output-section">
+        <h4>Cumulative after-tax value by year</h4>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Yr</th>
+                <th>{offerALabel}</th>
+                <th>{offerBLabel}</th>
+                <th>Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {det.yearly_rows.map((row) => (
+                <JobOfferYearRow key={row.year} row={row} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {analysis.warnings.length > 0 && (
+        <div className="notice output-section">
+          {analysis.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobOfferYearRow({ row }: { row: JobOfferYearComparisonRow }) {
+  return (
+    <tr>
+      <td>{row.year}</td>
+      <td>{formatCurrency(row.offer_a_cumulative_value_cents)}</td>
+      <td>{formatCurrency(row.offer_b_cumulative_value_cents)}</td>
+      <td style={{ color: row.offer_b_minus_offer_a_cents >= 0 ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>
+        {formatCurrency(row.offer_b_minus_offer_a_cents)}
+      </td>
+    </tr>
+  );
+}
+
+function JobOfferNumberField({
+  label,
+  value,
+  onChange,
+  suffix,
+  step,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  suffix?: string;
+  step?: number;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <div className="field__input">
+        <input type="number" step={step ?? "any"} value={value} onChange={(event) => onChange(event.target.value)} />
+        {suffix && <small>{suffix}</small>}
+      </div>
+    </label>
+  );
+}
+
+function JobOfferTextField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <div className="field__input">
+        <input type="text" value={value} onChange={(event) => onChange(event.target.value)} />
+      </div>
+    </label>
   );
 }
 
