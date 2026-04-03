@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import StrictInt
 
-from .models import AssumptionOverrides, FilingStatus, HousingStatus, IncomeStability, LossBehavior, RiskProfile, UserScenarioInput
+from .models import AssumptionOverrides, FilingStatus, HousingStatus, IncomeStability, LossBehavior, RetirementScenarioInput, RiskProfile, UserScenarioInput
 
 
 class RentVsBuyInputModel(BaseModel):
@@ -67,6 +67,30 @@ class CreateScenarioRequest(AnalyzeRequest):
 
     user_id: str | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class RetirementInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_portfolio_cents: StrictInt = Field(gt=0)
+    annual_spending_cents: StrictInt = Field(ge=0)
+    annual_guaranteed_income_cents: StrictInt = Field(default=0, ge=0)
+    retirement_years: StrictInt = Field(default=30, gt=0, le=60)
+    expected_annual_return_rate: float = Field(default=0.06, gt=-1.0, le=1.0)
+    risk_profile: RiskProfile = RiskProfile.MODERATE
+    loss_behavior: LossBehavior = LossBehavior.HOLD
+
+    def to_domain(self) -> RetirementScenarioInput:
+        return RetirementScenarioInput(**self.model_dump())
+
+
+class RetirementAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: RetirementInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
 
 
 class AnalysisEnvelope(BaseModel):

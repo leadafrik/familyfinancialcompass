@@ -235,8 +235,7 @@ def _sensitivity_entries(
     rows: list[dict[str, object]] = []
     for label, scenario_inputs, assumptions, calibration in cases:
         scenario_engine = RentVsBuyEngine(assumptions)
-        deterministic = scenario_engine._run_deterministic(scenario_inputs)
-        monte_carlo = scenario_engine._run_monte_carlo(scenario_inputs, calibration=calibration, seed=seed)
+        deterministic, monte_carlo = scenario_engine.analyze_with_calibration(scenario_inputs, calibration, seed)
         rows.append(
             {
                 "label": label,

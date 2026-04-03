@@ -51,6 +51,23 @@ class RentVsBuyEngine:
             calibration_used=calibration,
         )
 
+    def analyze_with_calibration(
+        self,
+        user_inputs: UserScenarioInput,
+        calibration: MonteCarloCalibration,
+        seed: int = 7,
+    ) -> tuple[DeterministicSummary, MonteCarloSummary]:
+        """Run deterministic and Monte Carlo with an explicitly supplied calibration.
+
+        Used by sensitivity analysis to vary both user inputs and market calibration
+        together without going through the full audit-trail machinery.
+        """
+        self._validate_inputs(user_inputs)
+        return (
+            self._run_deterministic(user_inputs),
+            self._run_monte_carlo(user_inputs, calibration=calibration, seed=seed),
+        )
+
     def _get_calibration(self, user_inputs: UserScenarioInput) -> MonteCarloCalibration:
         return get_calibration(user_inputs.market_region)
 
@@ -96,9 +113,11 @@ class RentVsBuyEngine:
         return min(max(user_inputs.marginal_tax_rate * 0.6, 0.0), 0.20)
 
     def _net_investment_return(self, user_inputs: UserScenarioInput, annual_gross_return: float) -> float:
+        lt_cg_rate = self._lt_cg_rate(user_inputs)
         return after_tax_investment_return(
             annual_gross_return=annual_gross_return,
-            lt_cg_rate=self._lt_cg_rate(user_inputs),
+            lt_cg_rate=lt_cg_rate,
+            dividend_tax_rate=lt_cg_rate,
         )
 
     def _investment_volatility(self, user_inputs: UserScenarioInput, calibration: MonteCarloCalibration) -> float:
@@ -507,9 +526,11 @@ class RentVsBuyEngine:
 
         appreciation_annual = np.clip(annual_draws[:, :, 0], -0.20, 0.20)
         investment_annual = np.clip(annual_draws[:, :, 1], -0.40, 0.25)
+        lt_cg_rate = self._lt_cg_rate(user_inputs)
         investment_annual = after_tax_investment_return(
             annual_gross_return=investment_annual,
-            lt_cg_rate=self._lt_cg_rate(user_inputs),
+            lt_cg_rate=lt_cg_rate,
+            dividend_tax_rate=lt_cg_rate,
         )
         rent_growth_annual = np.clip(annual_draws[:, :, 2], -0.05, 0.15)
         mortgage_rate_annual = np.clip(annual_draws[:, 0, 3], 0.0, 0.20)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import tempfile
@@ -31,17 +32,21 @@ class ScenarioRepository(Protocol):
 
     def list_for_user(self, user_id: str, limit: int, cursor: str | None = None) -> ScenarioPage: ...
 
+    def ping(self) -> None: ...
+
 
 def _parse_created_at(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
 def _encode_cursor(created_at: str, scenario_id: str) -> str:
-    return f"{created_at}|{scenario_id}"
+    raw = f"{created_at}|{scenario_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
 def _decode_cursor(cursor: str) -> tuple[str, str]:
-    created_at, scenario_id = cursor.rsplit("|", 1)
+    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+    created_at, scenario_id = raw.rsplit("|", 1)
     return created_at, scenario_id
 
 
@@ -79,6 +84,10 @@ class FileScenarioRepository:
     @property
     def storage_target(self) -> str:
         return str(self.storage_dir)
+
+    def ping(self) -> None:
+        if not self.storage_dir.is_dir():
+            raise RuntimeError(f"Scenario storage directory is not accessible: {self.storage_dir}")
 
     def save(self, scenario: ScenarioRecord, output: ScenarioOutputRecord) -> ScenarioBundle:
         if scenario.idempotency_key is not None:
@@ -200,6 +209,10 @@ class PostgresScenarioRepository:
     @property
     def pool(self) -> Any:
         return self._pool
+
+    def ping(self) -> None:
+        with self._pool.connection() as conn:
+            conn.execute("SELECT 1")
 
     def close(self) -> None:
         if self._owns_pool:

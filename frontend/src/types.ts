@@ -26,6 +26,16 @@ export interface RentVsBuyInputPayload {
   filing_status: FilingStatus;
 }
 
+export interface RetirementInputPayload {
+  current_portfolio_cents: number;
+  annual_spending_cents: number;
+  annual_guaranteed_income_cents: number;
+  retirement_years: number;
+  expected_annual_return_rate: number;
+  risk_profile: RiskProfile;
+  loss_behavior: LossBehavior;
+}
+
 export interface AssumptionOverridesPayload {
   mortgage_rate?: number;
   property_tax_rate?: number;
@@ -127,6 +137,46 @@ export interface AnalysisEnvelope {
   model_version: string;
   disclaimer: string;
   analysis: RentVsBuyAnalysis;
+}
+
+export interface RetirementYearProjectionRow {
+  year: number;
+  deterministic_portfolio_cents: number;
+  median_portfolio_cents: number;
+  p10_portfolio_cents: number;
+  p90_portfolio_cents: number;
+  depletion_probability: number;
+}
+
+export interface RetirementDeterministicSummary {
+  net_annual_withdrawal_cents: number;
+  current_withdrawal_rate: number;
+  depletion_year: number | null;
+  terminal_wealth_cents: number;
+}
+
+export interface RetirementMonteCarloSummary {
+  scenario_count: number;
+  probability_portfolio_survives: number;
+  safe_withdrawal_rate_95: number;
+  median_terminal_wealth_cents: number;
+  p10_terminal_wealth_cents: number;
+  p90_terminal_wealth_cents: number;
+  median_depletion_year: number | null;
+  yearly_rows: RetirementYearProjectionRow[];
+}
+
+export interface RetirementAnalysis {
+  deterministic: RetirementDeterministicSummary;
+  monte_carlo: RetirementMonteCarloSummary;
+  audit_trail: AuditTrailItem[];
+  warnings: string[];
+}
+
+export interface RetirementAnalysisEnvelope {
+  model_version: string;
+  disclaimer: string;
+  analysis: RetirementAnalysis;
 }
 
 export interface ReportInputsSummaryRow {
@@ -325,4 +375,14 @@ export interface AssumptionFormState {
   maintenanceRate: string;
   sellerClosingRate: string;
   buyerClosingRate: string;
+}
+
+export interface RetirementFormState {
+  currentPortfolio: string;
+  annualSpending: string;
+  annualGuaranteedIncome: string;
+  retirementYears: string;
+  expectedAnnualReturn: string;
+  riskProfile: RiskProfile;
+  lossBehavior: LossBehavior;
 }

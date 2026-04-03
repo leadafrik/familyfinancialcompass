@@ -365,6 +365,75 @@ class RentVsBuyAnalysis:
 
 
 @dataclass(frozen=True)
+class RetirementScenarioInput:
+    current_portfolio_cents: int
+    annual_spending_cents: int
+    annual_guaranteed_income_cents: int = 0
+    retirement_years: int = 30
+    expected_annual_return_rate: float = 0.06
+    risk_profile: RiskProfile = RiskProfile.MODERATE
+    loss_behavior: LossBehavior = LossBehavior.HOLD
+
+    def __post_init__(self) -> None:
+        if self.current_portfolio_cents <= 0:
+            raise ValueError("current_portfolio_cents must be positive.")
+        if self.annual_spending_cents < 0:
+            raise ValueError("annual_spending_cents must be non-negative.")
+        if self.annual_guaranteed_income_cents < 0:
+            raise ValueError("annual_guaranteed_income_cents must be non-negative.")
+        if self.retirement_years <= 0:
+            raise ValueError("retirement_years must be positive.")
+        if self.expected_annual_return_rate <= -1.0 or self.expected_annual_return_rate > 1.0:
+            raise ValueError("expected_annual_return_rate must be greater than -1 and no more than 1.")
+
+    @property
+    def net_annual_withdrawal_cents(self) -> int:
+        return self.annual_spending_cents - self.annual_guaranteed_income_cents
+
+    @property
+    def current_withdrawal_rate(self) -> float:
+        return max(self.net_annual_withdrawal_cents, 0) / self.current_portfolio_cents
+
+
+@dataclass(frozen=True)
+class RetirementYearProjectionRow:
+    year: int
+    deterministic_portfolio_cents: int
+    median_portfolio_cents: int
+    p10_portfolio_cents: int
+    p90_portfolio_cents: int
+    depletion_probability: float
+
+
+@dataclass(frozen=True)
+class RetirementDeterministicSummary:
+    net_annual_withdrawal_cents: int
+    current_withdrawal_rate: float
+    depletion_year: int | None
+    terminal_wealth_cents: int
+
+
+@dataclass(frozen=True)
+class RetirementMonteCarloSummary:
+    scenario_count: int
+    probability_portfolio_survives: float
+    safe_withdrawal_rate_95: float
+    median_terminal_wealth_cents: int
+    p10_terminal_wealth_cents: int
+    p90_terminal_wealth_cents: int
+    median_depletion_year: int | None
+    yearly_rows: list[RetirementYearProjectionRow]
+
+
+@dataclass(frozen=True)
+class RetirementSurvivalAnalysis:
+    deterministic: RetirementDeterministicSummary
+    monte_carlo: RetirementMonteCarloSummary
+    audit_trail: list[AssumptionAuditItem]
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ScenarioRecord:
     id: str
     user_id: str

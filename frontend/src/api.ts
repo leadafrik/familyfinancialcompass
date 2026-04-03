@@ -4,6 +4,8 @@ import type {
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   ReportEnvelope,
+  RetirementAnalysisEnvelope,
+  RetirementInputPayload,
   ScenarioEnvelope,
   ScenarioListEnvelope,
 } from "./types";
@@ -31,6 +33,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function analyzeRentVsBuy(payload: AnalyzeRequestPayload): Promise<AnalysisEnvelope> {
   return request<AnalysisEnvelope>("/v1/rent-vs-buy/analyze", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function analyzeRetirementSurvival(payload: {
+  input: RetirementInputPayload;
+  simulation_seed: number;
+}): Promise<RetirementAnalysisEnvelope> {
+  return request<RetirementAnalysisEnvelope>("/v1/retirement-survival/analyze", {
     method: "POST",
     body: JSON.stringify(payload),
   });

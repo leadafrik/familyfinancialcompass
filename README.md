@@ -55,6 +55,7 @@ Endpoints:
 - `GET /livez`
 - `GET /v1/rent-vs-buy/assumptions/current`
 - `POST /v1/rent-vs-buy/analyze`
+- `POST /v1/retirement-survival/analyze`
 - `POST /v1/rent-vs-buy/report`
 - `POST /v1/rent-vs-buy/scenarios`
 - `GET /v1/scenarios/{scenario_id}`
@@ -110,7 +111,7 @@ The rent-vs-buy UI now supports on-demand PDF generation and a compact live-assu
 Current product shape:
 
 - `Rent vs Buy`: live end-to-end through the API
-- `Retirement Survival`: next computation module
+- `Retirement Survival`: live analysis engine
 - `Job Offer & Relocation`: queued
 - `College vs Retirement`: queued
 - `Debt Payoff vs Invest`: queued

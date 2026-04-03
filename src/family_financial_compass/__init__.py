@@ -13,6 +13,8 @@ from .models import (
     HousingStatus,
     IncomeStability,
     LossBehavior,
+    RetirementScenarioInput,
+    RetirementSurvivalAnalysis,
     RentVsBuyAnalysis,
     RiskProfile,
     SystemAssumptions,
@@ -20,6 +22,7 @@ from .models import (
 )
 from .reporting import build_rent_vs_buy_report
 from .repository import FileScenarioRepository, PostgresScenarioRepository, ScenarioBundle, ScenarioPage
+from .retirement_survival import RetirementSurvivalEngine
 from .rent_vs_buy import RentVsBuyEngine
 from .service import FamilyFinancialCompassService
 from .scenario import create_saved_scenario
@@ -48,6 +51,9 @@ __all__ = [
     "FamilyFinancialCompassService",
     "PostgresScenarioRepository",
     "PostgresAssumptionStore",
+    "RetirementScenarioInput",
+    "RetirementSurvivalAnalysis",
+    "RetirementSurvivalEngine",
     "RentVsBuyAnalysis",
     "RentVsBuyEngine",
     "RiskProfile",

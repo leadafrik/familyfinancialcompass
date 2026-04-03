@@ -6,7 +6,7 @@ from .models import FilingStatus
 def incremental_itemized_deduction_cents(
     annual_mortgage_interest_cents: int,
     annual_property_tax_cents: int,
-    standard_deduction_cents: int = 2_950_000,
+    standard_deduction_cents: int,
 ) -> int:
     itemized_total = annual_mortgage_interest_cents + annual_property_tax_cents
     return max(0, itemized_total - standard_deduction_cents)
@@ -17,7 +17,7 @@ def mortgage_interest_tax_saving_cents(
     annual_property_tax_cents: int,
     marginal_tax_rate: float,
     itemizes: bool,
-    standard_deduction_cents: int = 2_950_000,
+    standard_deduction_cents: int,
 ) -> int:
     if not itemizes:
         return 0
@@ -34,7 +34,7 @@ def incremental_mortgage_interest_deduction_cents(
     annual_property_tax_cents: int,
     marginal_tax_rate: float,
     itemizes: bool,
-    standard_deduction_cents: int = 2_950_000,
+    standard_deduction_cents: int,
 ) -> int:
     return mortgage_interest_tax_saving_cents(
         annual_mortgage_interest_cents=annual_interest_paid_cents,

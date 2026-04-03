@@ -13,6 +13,7 @@ from .api_models import (
     CreateScenarioRequest,
     CurrentAssumptionsEnvelope,
     HealthEnvelope,
+    RetirementAnalyzeRequest,
     ReportEnvelope,
     ScenarioEnvelope,
     ScenarioListEnvelope,
@@ -91,6 +92,13 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @app.get("/readyz", response_model=HealthEnvelope)
     async def readyz() -> HealthEnvelope:
+        try:
+            service.is_ready()
+        except Exception as exc:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable", "detail": str(exc)},
+            )
         current = service.current_assumptions_payload()
         return HealthEnvelope(
             status="ok",
@@ -103,14 +111,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @app.get("/livez", response_model=HealthEnvelope)
     async def livez() -> HealthEnvelope:
-        current = service.current_assumptions_payload()
         return HealthEnvelope(
             status="ok",
             model_version=service.model_version,
             scenario_store=repository.storage_target,
             assumptions_path=str(app_settings.assumptions_path),
-            assumptions_source=current["source"],
-            assumptions_cache_date=current["cache_date"],
         )
 
     @app.get("/v1/rent-vs-buy/assumptions/current", response_model=CurrentAssumptionsEnvelope)
@@ -123,6 +128,16 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             request.input.to_domain(),
             seed=request.simulation_seed,
             assumption_overrides=None if request.assumption_overrides is None else request.assumption_overrides.to_domain(),
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return AnalysisEnvelope(**payload)
+
+    @app.post("/v1/retirement-survival/analyze", response_model=AnalysisEnvelope)
+    async def analyze_retirement_survival(request: RetirementAnalyzeRequest) -> AnalysisEnvelope:
+        payload = service.analyze_retirement_survival_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
             assumptions_snapshot=request.assumptions_snapshot,
             audit_trail_snapshot=request.audit_trail_snapshot,
         )

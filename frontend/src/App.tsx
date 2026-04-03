@@ -2,6 +2,7 @@ import { startTransition, useEffect, useState } from "react";
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
 
 import {
+  analyzeRetirementSurvival,
   analyzeRentVsBuy,
   buildRentVsBuyReport,
   getCurrentRentVsBuyAssumptions,
@@ -16,6 +17,11 @@ import type {
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   FormState,
+  RetirementAnalysis,
+  RetirementAnalysisEnvelope,
+  RetirementFormState,
+  RetirementInputPayload,
+  RetirementYearProjectionRow,
   RentVsBuyInputPayload,
   ScenarioEnvelope,
   YearlyComparisonRow,
@@ -45,8 +51,8 @@ const modules: Array<{
   {
     id: "retirement-survival",
     label: "Retirement Survival",
-    status: "next",
-    description: "Sequence-of-returns survival and safe withdrawal planning.",
+    status: "live",
+    description: "Sequence-of-returns survival and sustainable withdrawal planning.",
   },
   {
     id: "job-offer",
@@ -100,6 +106,16 @@ const defaultAssumptionFormState: AssumptionFormState = {
   maintenanceRate: "1.0",
   sellerClosingRate: "7.0",
   buyerClosingRate: "3.0",
+};
+
+const defaultRetirementFormState: RetirementFormState = {
+  currentPortfolio: "1500000",
+  annualSpending: "80000",
+  annualGuaranteedIncome: "20000",
+  retirementYears: "30",
+  expectedAnnualReturn: "6.0",
+  riskProfile: "moderate",
+  lossBehavior: "hold",
 };
 
 type AssumptionBaseline = {
@@ -167,6 +183,18 @@ function buildPayload(form: FormState): RentVsBuyInputPayload {
     marginal_tax_rate: percentToRate(form.marginalTaxRate),
     itemizes_deductions: form.itemizesDeductions,
     filing_status: form.filingStatus,
+  };
+}
+
+function buildRetirementPayload(form: RetirementFormState): RetirementInputPayload {
+  return {
+    current_portfolio_cents: dollarsToCents(form.currentPortfolio),
+    annual_spending_cents: dollarsToCents(form.annualSpending),
+    annual_guaranteed_income_cents: dollarsToCents(form.annualGuaranteedIncome),
+    retirement_years: Number(form.retirementYears),
+    expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
+    risk_profile: form.riskProfile,
+    loss_behavior: form.lossBehavior,
   };
 }
 
@@ -434,11 +462,16 @@ function verdictConfig(prob: number): {
 function App() {
   const [activeModule, setActiveModule] = useState<ModuleId>("rent-vs-buy");
   const [form, setForm] = useState<FormState>(defaultFormState);
+  const [retirementForm, setRetirementForm] = useState<RetirementFormState>(
+    defaultRetirementFormState,
+  );
   const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionFormState);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
 
   const [analysisEnvelope, setAnalysisEnvelope] = useState<AnalysisEnvelope | null>(null);
+  const [retirementAnalysisEnvelope, setRetirementAnalysisEnvelope] =
+    useState<RetirementAnalysisEnvelope | null>(null);
   const [currentAssumptions, setCurrentAssumptions] = useState<CurrentAssumptionsEnvelope | null>(null);
   const [savedScenarios, setSavedScenarios] = useState<ScenarioEnvelope[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
@@ -501,6 +534,7 @@ function App() {
   const assumptionBaseline =
     scenarioToBaseline(selectedScenario) ?? currentAssumptionsToBaseline(currentAssumptions);
   const activeAnalysis = selectedScenario?.analysis ?? analysisEnvelope?.analysis ?? null;
+  const activeRetirementAnalysis = retirementAnalysisEnvelope?.analysis ?? null;
   const activeModelVersion =
     selectedScenario?.model_version ?? analysisEnvelope?.model_version ?? null;
   const costBreakdown = activeAnalysis?.deterministic.first_year_cost_breakdown ?? null;
@@ -518,6 +552,23 @@ function App() {
       setSelectedScenarioId(null);
       const r = await analyzeRentVsBuy(request);
       startTransition(() => setAnalysisEnvelope(r));
+    } catch (e: unknown) {
+      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  async function handleRetirementAnalyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAnalysisError(null);
+    setIsAnalyzing(true);
+    try {
+      const response = await analyzeRetirementSurvival({
+        input: buildRetirementPayload(retirementForm),
+        simulation_seed: 7,
+      });
+      startTransition(() => setRetirementAnalysisEnvelope(response));
     } catch (e: unknown) {
       setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
     } finally {
@@ -975,6 +1026,16 @@ function App() {
               )}
             </section>
           </div>
+        ) : activeModule === "retirement-survival" ? (
+          <RetirementLayout
+            form={retirementForm}
+            setForm={setRetirementForm}
+            analysis={activeRetirementAnalysis}
+            modelVersion={retirementAnalysisEnvelope?.model_version ?? null}
+            isAnalyzing={isAnalyzing}
+            analysisError={analysisError}
+            onAnalyze={handleRetirementAnalyze}
+          />
         ) : (
           <section className="panel panel--placeholder">
             <div className="panel__header">
@@ -995,6 +1056,207 @@ function App() {
 }
 
 // ── output panel ──────────────────────────────────────────────────────────────
+
+function RetirementLayout({
+  form,
+  setForm,
+  analysis,
+  modelVersion,
+  isAnalyzing,
+  analysisError,
+  onAnalyze,
+}: {
+  form: RetirementFormState;
+  setForm: Dispatch<SetStateAction<RetirementFormState>>;
+  analysis: RetirementAnalysis | null;
+  modelVersion: string | null;
+  isAnalyzing: boolean;
+  analysisError: string | null;
+  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+}) {
+  return (
+    <div className="rent-layout">
+      <section className="panel">
+        <div className="panel__header">
+          <div>
+            <span className="panel__eyebrow">Inputs</span>
+            <h3>Retirement plan</h3>
+          </div>
+          <p>Portfolio, spending, guaranteed income, horizon, and market behavior. Nothing else.</p>
+        </div>
+
+        <form className="form-grid" onSubmit={onAnalyze}>
+          <p className="form-section-label">Portfolio</p>
+          <NumField label="Current portfolio" name="currentPortfolio" value={form.currentPortfolio} onChange={setForm} suffix="USD" />
+          <div className="form-two-col">
+            <NumField label="Annual spending" name="annualSpending" value={form.annualSpending} onChange={setForm} suffix="USD" />
+            <NumField label="Guaranteed income" name="annualGuaranteedIncome" value={form.annualGuaranteedIncome} onChange={setForm} suffix="USD" />
+          </div>
+
+          <p className="form-section-label">Return assumptions</p>
+          <div className="form-two-col">
+            <NumField label="Retirement years" name="retirementYears" value={form.retirementYears} onChange={setForm} suffix="yrs" />
+            <NumField label="Expected return" name="expectedAnnualReturn" value={form.expectedAnnualReturn} onChange={setForm} suffix="%/yr" step={0.1} />
+          </div>
+          <div className="form-two-col">
+            <SelectField
+              label="Risk tolerance"
+              value={form.riskProfile}
+              onChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  riskProfile: value as RetirementFormState["riskProfile"],
+                }))
+              }
+              options={[
+                { value: "conservative", label: "Conservative" },
+                { value: "moderate", label: "Moderate" },
+                { value: "aggressive", label: "Aggressive" },
+              ]}
+            />
+            <SelectField
+              label="If markets crash"
+              value={form.lossBehavior}
+              onChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  lossBehavior: value as RetirementFormState["lossBehavior"],
+                }))
+              }
+              options={[
+                { value: "hold", label: "Hold steady" },
+                { value: "sell_to_cash", label: "Sell to cash" },
+                { value: "buy_more", label: "Buy more" },
+              ]}
+            />
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
+              {isAnalyzing ? "Running survival simulation…" : "Run analysis"}
+            </button>
+          </div>
+          {analysisError && <p className="message message--error">{analysisError}</p>}
+        </form>
+      </section>
+
+      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
+        {analysis === null ? (
+          <EmptyOutput loading={isAnalyzing} />
+        ) : (
+          <RetirementOutputPanel analysis={analysis} modelVersion={modelVersion} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function RetirementOutputPanel({
+  analysis,
+  modelVersion,
+}: {
+  analysis: RetirementAnalysis;
+  modelVersion: string | null;
+}) {
+  const det = analysis.deterministic;
+  const mc = analysis.monte_carlo;
+  const sustainable = mc.probability_portfolio_survives >= 0.8;
+
+  return (
+    <div>
+      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
+        <div>
+          <span className="panel__eyebrow">Output</span>
+          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
+            Retirement survival
+          </h3>
+        </div>
+        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
+      </div>
+
+      <div
+        className="verdict-card"
+        style={{
+          background: sustainable ? "rgba(36, 71, 55, 0.06)" : "rgba(140, 47, 61, 0.06)",
+          border: sustainable ? "1px solid rgba(36, 71, 55, 0.18)" : "1px solid rgba(140, 47, 61, 0.18)",
+        }}
+      >
+        <p className="verdict-card__eyebrow" style={{ color: sustainable ? "var(--accent)" : "var(--danger)" }}>
+          {sustainable ? "Plan is holding up" : "Plan is under strain"}
+        </p>
+        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
+          Portfolio survives in {formatPercent(mc.probability_portfolio_survives)} of simulated retirement paths.
+        </p>
+        <p className="verdict-card__sub">
+          Current withdrawal rate is {(det.current_withdrawal_rate * 100).toFixed(2)}%. The modeled 95% safe rate is {(mc.safe_withdrawal_rate_95 * 100).toFixed(2)}%.
+        </p>
+      </div>
+
+      <div className="summary-grid output-section">
+        <div className="summary-card">
+          <span>Median ending wealth</span>
+          <strong>{formatCurrency(mc.median_terminal_wealth_cents)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Downside ending wealth</span>
+          <strong style={{ color: "var(--danger)" }}>{formatCurrency(mc.p10_terminal_wealth_cents)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Upside ending wealth</span>
+          <strong style={{ color: "var(--accent)" }}>{formatCurrency(mc.p90_terminal_wealth_cents)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Deterministic endpoint</span>
+          <strong>{formatCurrency(det.terminal_wealth_cents)}</strong>
+        </div>
+      </div>
+
+      <div className="detail-card output-section">
+        <h4>Portfolio path by year</h4>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Yr</th>
+                <th>Deterministic</th>
+                <th>Median</th>
+                <th>10th pct.</th>
+                <th>90th pct.</th>
+                <th>Deplete prob.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mc.yearly_rows.map((row) => (
+                <RetirementProjectionTableRow key={row.year} row={row} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {analysis.warnings.length > 0 && (
+        <div className="notice output-section">
+          {analysis.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RetirementProjectionTableRow({ row }: { row: RetirementYearProjectionRow }) {
+  return (
+    <tr>
+      <td>{row.year}</td>
+      <td>{formatCurrency(row.deterministic_portfolio_cents)}</td>
+      <td>{formatCurrency(row.median_portfolio_cents)}</td>
+      <td>{formatCurrency(row.p10_portfolio_cents)}</td>
+      <td>{formatCurrency(row.p90_portfolio_cents)}</td>
+      <td>{formatPercent(row.depletion_probability)}</td>
+    </tr>
+  );
+}
 
 function EmptyOutput({ loading }: { loading: boolean }) {
   return (
@@ -1266,16 +1528,8 @@ function YearRow({ row }: { row: YearlyComparisonRow }) {
 }
 
 type NumericFieldName =
-  | "targetHomePrice"
-  | "downPayment"
-  | "expectedYearsInHome"
-  | "monthlyRent"
-  | "annualIncome"
-  | "currentSavings"
-  | "monthlySavings"
-  | "appreciationRate"
-  | "investmentReturnRate"
-  | "marginalTaxRate";
+  | keyof FormState
+  | keyof RetirementFormState;
 
 function NumField({
   label,
@@ -1288,7 +1542,7 @@ function NumField({
   label: string;
   name: NumericFieldName;
   value: string;
-  onChange: Dispatch<SetStateAction<FormState>>;
+  onChange: Dispatch<SetStateAction<FormState>> | Dispatch<SetStateAction<RetirementFormState>>;
   suffix?: string;
   step?: number;
 }) {
@@ -1300,7 +1554,10 @@ function NumField({
           type="number"
           step={step ?? "any"}
           value={value}
-          onChange={(e) => onChange((f) => ({ ...f, [name]: e.target.value }))}
+          onChange={(e) =>
+            (onChange as unknown as Dispatch<SetStateAction<Record<string, unknown>>>)
+            ((current) => ({ ...current, [name]: e.target.value }))
+          }
         />
         {suffix && <small>{suffix}</small>}
       </div>

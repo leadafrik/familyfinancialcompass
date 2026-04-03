@@ -3,8 +3,9 @@ from __future__ import annotations
 from .assumptions import InMemoryAssumptionStore, apply_assumption_overrides
 from .config import AssumptionBundle, assumption_bundle_from_payload
 from .legal import OUTPUT_DISCLAIMER
-from .models import AssumptionOverrides, RentVsBuyAnalysis, UserScenarioInput
+from .models import AssumptionOverrides, RetirementScenarioInput, RetirementSurvivalAnalysis, RentVsBuyAnalysis, UserScenarioInput
 from .reporting import build_rent_vs_buy_report
+from .retirement_survival import RetirementSurvivalEngine
 from .rent_vs_buy import RentVsBuyEngine
 from .repository import ScenarioBundle, ScenarioPage, ScenarioRepository
 from .scenario import create_saved_scenario, serialize_model
@@ -19,7 +20,7 @@ class FamilyFinancialCompassService:
         audit_trail: list | tuple = (),
         default_user_id: str = "anonymous",
         groq_api_key: str | None = None,
-        groq_model: str = "openai/gpt-oss-20b",
+        groq_model: str = "llama-3.3-70b-versatile",
         groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions",
     ):
         self.repository = repository
@@ -110,6 +111,42 @@ class FamilyFinancialCompassService:
             "analysis": serialize_model(analysis),
         }
 
+    def analyze_retirement_survival(
+        self,
+        user_inputs: RetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> RetirementSurvivalAnalysis:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        engine = RetirementSurvivalEngine(bundle.assumptions)
+        return engine.analyze(user_inputs, audit_trail=list(bundle.audit_trail), seed=seed)
+
+    def analyze_retirement_survival_payload(
+        self,
+        user_inputs: RetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = RetirementSurvivalEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "analysis": serialize_model(analysis),
+        }
+
     def build_rent_vs_buy_report_payload(
         self,
         user_inputs: UserScenarioInput,
@@ -178,6 +215,10 @@ class FamilyFinancialCompassService:
             "assumptions": serialize_model(loaded.bundle.assumptions),
             "audit_trail": serialize_model(list(loaded.bundle.audit_trail)),
         }
+
+    def is_ready(self) -> None:
+        """Raises if the backing store is unreachable. Used by /readyz."""
+        self.repository.ping()
 
     def get_scenario(self, scenario_id: str) -> ScenarioBundle | None:
         return self.repository.get(scenario_id)
