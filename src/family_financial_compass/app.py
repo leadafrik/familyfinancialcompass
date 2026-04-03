@@ -11,11 +11,14 @@ from .api_models import (
     AnalysisEnvelope,
     AnalyzeRequest,
     CollegeVsRetirementAnalyzeRequest,
+    CollegeVsRetirementReportRequest,
     CreateScenarioRequest,
     CurrentAssumptionsEnvelope,
     HealthEnvelope,
     JobOfferAnalyzeRequest,
+    JobOfferReportRequest,
     RetirementAnalyzeRequest,
+    RetirementReportRequest,
     ReportEnvelope,
     ScenarioEnvelope,
     ScenarioListEnvelope,
@@ -40,6 +43,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             pool=repository.pool,
             fallback_path=app_settings.assumptions_path,
             cache_ttl_days=app_settings.assumptions_cache_ttl_days,
+            bls_api_key=app_settings.bls_api_key,
         )
     else:
         repository = FileScenarioRepository(app_settings.data_dir)
@@ -166,6 +170,36 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             request.input.to_domain(),
             seed=request.simulation_seed,
             assumption_overrides=None if request.assumption_overrides is None else request.assumption_overrides.to_domain(),
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ReportEnvelope(**payload)
+
+    @app.post("/v1/retirement-survival/report", response_model=ReportEnvelope)
+    async def report_retirement_survival(request: RetirementReportRequest) -> ReportEnvelope:
+        payload = service.build_retirement_survival_report_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ReportEnvelope(**payload)
+
+    @app.post("/v1/job-offer/report", response_model=ReportEnvelope)
+    async def report_job_offer(request: JobOfferReportRequest) -> ReportEnvelope:
+        payload = service.build_job_offer_report_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ReportEnvelope(**payload)
+
+    @app.post("/v1/college-vs-retirement/report", response_model=ReportEnvelope)
+    async def report_college_vs_retirement(request: CollegeVsRetirementReportRequest) -> ReportEnvelope:
+        payload = service.build_college_vs_retirement_report_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
             assumptions_snapshot=request.assumptions_snapshot,
             audit_trail_snapshot=request.audit_trail_snapshot,
         )

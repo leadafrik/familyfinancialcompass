@@ -16,7 +16,12 @@ from .models import (
     RentVsBuyAnalysis,
     UserScenarioInput,
 )
-from .reporting import build_rent_vs_buy_report
+from .reporting import (
+    build_college_vs_retirement_report,
+    build_job_offer_report,
+    build_rent_vs_buy_report,
+    build_retirement_survival_report,
+)
 from .retirement_survival import RetirementSurvivalEngine
 from .rent_vs_buy import RentVsBuyEngine
 from .repository import ScenarioBundle, ScenarioPage, ScenarioRepository
@@ -248,6 +253,84 @@ class FamilyFinancialCompassService:
             engine=engine,
             user_inputs=user_inputs,
             audit_trail=audit_trail,
+            seed=seed,
+            groq_api_key=self.groq_api_key,
+            groq_model=self.groq_model,
+            groq_base_url=self.groq_base_url,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "report": serialize_model(report),
+        }
+
+    def build_retirement_survival_report_payload(
+        self,
+        user_inputs: RetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        report = build_retirement_survival_report(
+            engine=RetirementSurvivalEngine(bundle.assumptions),
+            user_inputs=user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+            groq_api_key=self.groq_api_key,
+            groq_model=self.groq_model,
+            groq_base_url=self.groq_base_url,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "report": serialize_model(report),
+        }
+
+    def build_job_offer_report_payload(
+        self,
+        user_inputs: JobOfferScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        report = build_job_offer_report(
+            engine=JobOfferEngine(bundle.assumptions),
+            user_inputs=user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+            groq_api_key=self.groq_api_key,
+            groq_model=self.groq_model,
+            groq_base_url=self.groq_base_url,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "report": serialize_model(report),
+        }
+
+    def build_college_vs_retirement_report_payload(
+        self,
+        user_inputs: CollegeVsRetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        report = build_college_vs_retirement_report(
+            engine=CollegeVsRetirementEngine(bundle.assumptions),
+            user_inputs=user_inputs,
+            audit_trail=list(bundle.audit_trail),
             seed=seed,
             groq_api_key=self.groq_api_key,
             groq_model=self.groq_model,

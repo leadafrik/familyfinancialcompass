@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from family_financial_compass.config import DEFAULT_SYSTEM_ASSUMPTIONS
+from family_financial_compass.config import DEFAULT_SYSTEM_ASSUMPTIONS, REGIONAL_PROPERTY_TAX_RATES
 from family_financial_compass.db import InMemoryScenarioRepository
 from family_financial_compass.models import (
     FilingStatus,
@@ -122,15 +122,20 @@ def test_pmi_triggers_and_clears_correctly() -> None:
 def test_fifteen_year_loan_builds_equity_faster() -> None:
     engine = RentVsBuyEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
     analysis_30 = engine.analyze(scenario(loan_term_years=30), seed=17)
+    analysis_20 = engine.analyze(scenario(loan_term_years=20), seed=17)
     analysis_15 = engine.analyze(scenario(loan_term_years=15), seed=17)
     cost_30 = analysis_30.deterministic.cost_breakdown
+    cost_20 = analysis_20.deterministic.cost_breakdown
     cost_15 = analysis_15.deterministic.cost_breakdown
     year_5_30 = analysis_30.deterministic.yearly_comparison[4]
+    year_5_20 = analysis_20.deterministic.yearly_comparison[4]
     year_5_15 = analysis_15.deterministic.yearly_comparison[4]
 
     assert cost_30.total_interest_paid_cents > cost_15.total_interest_paid_cents
+    assert cost_30.total_interest_paid_cents > cost_20.total_interest_paid_cents > cost_15.total_interest_paid_cents
+    assert year_5_15.remaining_principal_cents < year_5_20.remaining_principal_cents < year_5_30.remaining_principal_cents
     assert year_5_15.remaining_principal_cents < year_5_30.remaining_principal_cents
-    assert cost_15.principal_and_interest_cents / 12 > cost_30.principal_and_interest_cents / 12
+    assert cost_15.principal_and_interest_cents / 12 > cost_20.principal_and_interest_cents / 12 > cost_30.principal_and_interest_cents / 12
 
 
 def test_short_horizon_no_break_even_and_loss_aversion_bites() -> None:
@@ -242,3 +247,59 @@ def test_in_memory_scenario_repository_round_trips() -> None:
     assert repository.get_scenario(scenario_record.scenario_id) == scenario_record
     assert repository.get_output(output_record.scenario_id) == output_record
     assert repository.get_scenario("nonexistent-id") is None
+
+
+def test_regional_property_tax_lowers_buy_cost_in_coastal_market() -> None:
+    """Coastal high-cost market has lower effective property tax rate than national default.
+
+    On a $550k home, 1.15% vs 1.74% saves ~$3,200/yr in tax — this should visibly
+    reduce the buyer's total cost-of-ownership and improve their net worth position.
+    """
+    engine = RentVsBuyEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    coastal = engine.analyze(scenario(market_region="coastal_high_cost"), seed=42)
+    national = engine.analyze(scenario(market_region="national"), seed=42)
+
+    # Coastal market has a lower property tax rate than national
+    assert REGIONAL_PROPERTY_TAX_RATES["coastal_high_cost"] < REGIONAL_PROPERTY_TAX_RATES["national"]
+
+    # Lower property tax should reduce buyer costs, improving buy advantage (or reducing disadvantage)
+    coastal_buy_year1 = coastal.deterministic.yearly_rows[0].total_buy_cost_cents
+    national_buy_year1 = national.deterministic.yearly_rows[0].total_buy_cost_cents
+    assert coastal_buy_year1 < national_buy_year1
+
+
+def test_midwest_property_tax_increases_buy_cost_vs_sunbelt() -> None:
+    """Midwest stable market has higher effective property tax than sunbelt."""
+    engine = RentVsBuyEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    midwest = engine.analyze(scenario(market_region="midwest_stable"), seed=42)
+    sunbelt = engine.analyze(scenario(market_region="sunbelt_growth"), seed=42)
+
+    assert REGIONAL_PROPERTY_TAX_RATES["midwest_stable"] > REGIONAL_PROPERTY_TAX_RATES["sunbelt_growth"]
+    midwest_buy_year1 = midwest.deterministic.yearly_rows[0].total_buy_cost_cents
+    sunbelt_buy_year1 = sunbelt.deterministic.yearly_rows[0].total_buy_cost_cents
+    assert midwest_buy_year1 > sunbelt_buy_year1
+
+
+def test_assumption_override_bypasses_regional_property_tax() -> None:
+    """Explicit assumption override takes precedence over regional lookup."""
+    from family_financial_compass.models import AssumptionOverrides
+    from family_financial_compass.assumptions import apply_assumption_overrides
+    from family_financial_compass.config import default_assumption_bundle
+
+    base_bundle = default_assumption_bundle()
+    override_rate = 0.009  # 0.9% — explicit user override
+    overridden_bundle = apply_assumption_overrides(
+        base_bundle,
+        AssumptionOverrides(property_tax_rate=override_rate),
+    )
+
+    engine_default = RentVsBuyEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    engine_override = RentVsBuyEngine(overridden_bundle.assumptions)
+
+    # The override engine uses 0.9% regardless of coastal market's 1.15%
+    coastal_default = engine_default.analyze(scenario(market_region="coastal_high_cost"), seed=42)
+    coastal_override = engine_override.analyze(scenario(market_region="coastal_high_cost"), seed=42)
+
+    # 0.9% < 1.15%, so override produces lower buy cost than regional rate
+    assert coastal_override.deterministic.yearly_rows[0].total_buy_cost_cents < \
+           coastal_default.deterministic.yearly_rows[0].total_buy_cost_cents

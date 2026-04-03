@@ -3,13 +3,16 @@ import type {
   AnalyzeRequestPayload,
   CollegeVsRetirementAnalysisEnvelope,
   CollegeVsRetirementInputPayload,
+  CollegeVsRetirementReport,
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   JobOfferAnalysisEnvelope,
   JobOfferInputPayload,
+  JobOfferReport,
   ReportEnvelope,
   RetirementAnalysisEnvelope,
   RetirementInputPayload,
+  RetirementSurvivalReport,
   ScenarioEnvelope,
   ScenarioListEnvelope,
 } from "./types";
@@ -81,6 +84,36 @@ export function saveRentVsBuyScenario(payload: CreateScenarioPayload): Promise<S
 
 export function buildRentVsBuyReport(payload: AnalyzeRequestPayload): Promise<ReportEnvelope> {
   return request<ReportEnvelope>("/v1/rent-vs-buy/report", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function buildRetirementSurvivalReport(payload: {
+  input: RetirementInputPayload;
+  simulation_seed: number;
+}): Promise<ReportEnvelope<RetirementSurvivalReport>> {
+  return request<ReportEnvelope<RetirementSurvivalReport>>("/v1/retirement-survival/report", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function buildJobOfferReport(payload: {
+  input: JobOfferInputPayload;
+  simulation_seed: number;
+}): Promise<ReportEnvelope<JobOfferReport>> {
+  return request<ReportEnvelope<JobOfferReport>>("/v1/job-offer/report", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function buildCollegeVsRetirementReport(payload: {
+  input: CollegeVsRetirementInputPayload;
+  simulation_seed: number;
+}): Promise<ReportEnvelope<CollegeVsRetirementReport>> {
+  return request<ReportEnvelope<CollegeVsRetirementReport>>("/v1/college-vs-retirement/report", {
     method: "POST",
     body: JSON.stringify(payload),
   });

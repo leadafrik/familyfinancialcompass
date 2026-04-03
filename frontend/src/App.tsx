@@ -1,95 +1,124 @@
-import { startTransition, useEffect, useState } from "react";
-import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 
 import {
-  analyzeCollegeVsRetirement,
-  analyzeJobOffer,
-  analyzeRetirementSurvival,
-  analyzeRentVsBuy,
+  buildCollegeVsRetirementReport,
+  buildJobOfferReport,
   buildRentVsBuyReport,
+  buildRetirementSurvivalReport,
   getCurrentRentVsBuyAssumptions,
-  listScenarios,
   saveRentVsBuyScenario,
 } from "./api";
 import type {
-  AnalysisEnvelope,
-  AuditTrailItem,
   AssumptionFormState,
   AssumptionOverridesPayload,
-  CollegeVsRetirementAnalysis,
-  CollegeVsRetirementAnalysisEnvelope,
   CollegeVsRetirementFormState,
   CollegeVsRetirementInputPayload,
-  CollegeVsRetirementYearComparisonRow,
+  CollegeVsRetirementReport,
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   FormState,
-  JobOfferAnalysis,
-  JobOfferAnalysisEnvelope,
   JobOfferFormSideState,
   JobOfferFormState,
   JobOfferInputPayload,
-  JobOfferYearComparisonRow,
-  RetirementAnalysis,
-  RetirementAnalysisEnvelope,
+  JobOfferReport,
+  ReportAuditTrailRow,
+  ReportEnvelope,
+  ReportInputsSummaryRow,
+  ReportYearRow,
   RetirementFormState,
   RetirementInputPayload,
-  RetirementYearProjectionRow,
+  RetirementSurvivalReport,
   RentVsBuyInputPayload,
-  ScenarioEnvelope,
-  YearlyComparisonRow,
+  RentVsBuyReport,
 } from "./types";
 
-// ── module definitions ────────────────────────────────────────────────────────
-
-type ModuleId =
+type LiveModuleId =
   | "rent-vs-buy"
-  | "retirement-survival"
   | "job-offer"
-  | "college-vs-retirement"
-  | "debt-payoff-vs-invest";
+  | "retirement-survival"
+  | "college-vs-retirement";
+
+type ModuleId = LiveModuleId | "debt-payoff-vs-invest";
+type ModulePhase = "input" | "result";
 
 const modules: Array<{
   id: ModuleId;
   label: string;
-  status: "live" | "next" | "queued";
+  status: "live" | "queued";
   description: string;
 }> = [
   {
     id: "rent-vs-buy",
     label: "Rent vs Buy",
     status: "live",
-    description: "Inputs, simulation, and saved scenarios wired end to end.",
-  },
-  {
-    id: "retirement-survival",
-    label: "Retirement Survival",
-    status: "live",
-    description: "Sequence-of-returns survival and sustainable withdrawal planning.",
+    description: "Model the tradeoff between renting flexibility and building home equity.",
   },
   {
     id: "job-offer",
     label: "Job Offer",
     status: "live",
-    description: "Cash compensation, equity uncertainty, and relocation tradeoffs.",
+    description: "Compare the economics of staying put versus switching roles.",
+  },
+  {
+    id: "retirement-survival",
+    label: "Retirement Survival",
+    status: "live",
+    description: "Stress test whether your portfolio can support your spending plan.",
   },
   {
     id: "college-vs-retirement",
     label: "College vs Retirement",
     status: "live",
-    description: "Direct the family savings budget toward tuition prep or retirement compounding.",
+    description: "See what prioritizing one family goal costs the other.",
   },
   {
     id: "debt-payoff-vs-invest",
     label: "Debt vs Invest",
     status: "queued",
-    description: "Debt spread, liquidity, and capital allocation decisions.",
+    description: "Next in line after the core family finance engines.",
   },
 ];
 
-// ── default form state ────────────────────────────────────────────────────────
+const phaseLabels: Record<LiveModuleId, string[]> = {
+  "rent-vs-buy": ["The home", "Your situation", "Your plans", "Tax & behavior"],
+  "job-offer": ["Current role", "New role", "Timeline & tax", "Uncertainty"],
+  "retirement-survival": ["Portfolio", "Spending", "Market behavior"],
+  "college-vs-retirement": ["Balances", "College timeline", "Retirement plan", "Market behavior"],
+};
 
-const defaultFormState: FormState = {
+const loadingMessages: Record<LiveModuleId, string[]> = {
+  "rent-vs-buy": [
+    "Calculating your housing cash flows...",
+    "Running 10,000 market scenarios...",
+    "Building your report...",
+  ],
+  "job-offer": [
+    "Calculating after-tax compensation...",
+    "Running 10,000 market scenarios...",
+    "Building your report...",
+  ],
+  "retirement-survival": [
+    "Projecting the base-case retirement path...",
+    "Running 10,000 market scenarios...",
+    "Building your report...",
+  ],
+  "college-vs-retirement": [
+    "Projecting both funding strategies...",
+    "Running 10,000 market scenarios...",
+    "Building your report...",
+  ],
+};
+
+const taxBracketOptions = [
+  { value: "12", label: "12% · lower bracket" },
+  { value: "22", label: "22% · middle income" },
+  { value: "24", label: "24% · upper middle income" },
+  { value: "32", label: "32% · high income" },
+  { value: "35", label: "35% · very high income" },
+];
+
+const defaultRentForm: FormState = {
   targetHomePrice: "550000",
   downPayment: "110000",
   loanTermYears: "30",
@@ -111,7 +140,7 @@ const defaultFormState: FormState = {
   filingStatus: "married_filing_jointly",
 };
 
-const defaultAssumptionFormState: AssumptionFormState = {
+const defaultAssumptionForm: AssumptionFormState = {
   mortgageRate: "6.82",
   propertyTaxRate: "1.74",
   monthlyHomeInsurance: "200",
@@ -121,30 +150,7 @@ const defaultAssumptionFormState: AssumptionFormState = {
   buyerClosingRate: "3.0",
 };
 
-const defaultRetirementFormState: RetirementFormState = {
-  currentPortfolio: "1500000",
-  annualSpending: "80000",
-  annualGuaranteedIncome: "20000",
-  retirementYears: "30",
-  expectedAnnualReturn: "6.0",
-  riskProfile: "moderate",
-  lossBehavior: "hold",
-};
-
-const defaultCollegeVsRetirementFormState: CollegeVsRetirementFormState = {
-  currentRetirementSavings: "400000",
-  currentCollegeSavings: "20000",
-  annualSavingsBudget: "18000",
-  annualCollegeCost: "35000",
-  yearsUntilCollege: "8",
-  yearsInCollege: "4",
-  retirementYears: "18",
-  expectedAnnualReturn: "6.0",
-  riskProfile: "moderate",
-  lossBehavior: "hold",
-};
-
-const defaultJobOfferFormState: JobOfferFormState = {
+const defaultJobOfferForm: JobOfferFormState = {
   offerA: {
     label: "Current role",
     baseSalary: "160000",
@@ -178,13 +184,34 @@ const defaultJobOfferFormState: JobOfferFormState = {
   localMarketConcentration: true,
 };
 
-type AssumptionBaseline = {
-  assumptionsSnapshot: Record<string, unknown>;
-  auditTrail: AuditTrailItem[];
-  assumptionForm: AssumptionFormState;
+const defaultRetirementForm: RetirementFormState = {
+  currentPortfolio: "1500000",
+  annualSpending: "80000",
+  annualGuaranteedIncome: "20000",
+  retirementYears: "30",
+  expectedAnnualReturn: "6.0",
+  riskProfile: "moderate",
+  lossBehavior: "hold",
 };
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+const defaultCollegeForm: CollegeVsRetirementFormState = {
+  currentRetirementSavings: "400000",
+  currentCollegeSavings: "20000",
+  annualSavingsBudget: "18000",
+  annualCollegeCost: "35000",
+  yearsUntilCollege: "8",
+  yearsInCollege: "4",
+  retirementYears: "18",
+  expectedAnnualReturn: "6.0",
+  riskProfile: "moderate",
+  lossBehavior: "hold",
+};
+
+type AssumptionBaseline = {
+  assumptionsSnapshot: Record<string, unknown>;
+  auditTrail: ReportAuditTrailRow[];
+  assumptionForm: AssumptionFormState;
+};
 
 function dollarsToCents(value: string): number {
   const parsed = Number(value);
@@ -196,21 +223,35 @@ function percentToRate(value: string): number {
   return Number.isFinite(parsed) ? parsed / 100 : 0;
 }
 
+function centsToMonthlyDollars(cents: number): string {
+  return String(Math.round(cents / 1200));
+}
+
 function rateToPercentString(value: number, digits = 2): string {
   return (value * 100).toFixed(digits);
 }
 
 function formatCurrency(cents: number): string {
-  const abs = Math.abs(cents) / 100;
   const sign = cents < 0 ? "−" : "";
-  return sign + "$" + abs.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return `${sign}$${(Math.abs(cents) / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
-function formatPercent(value: number): string {
-  return (value * 100).toFixed(0) + "%";
+function formatCompactCurrency(cents: number): string {
+  const sign = cents < 0 ? "−" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toLocaleString("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  })}`;
 }
 
-function formatDate(value: string): string {
+function formatPercent(value: number, digits = 0): string {
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function formatDate(value: string | null): string {
+  if (!value) {
+    return "Unknown";
+  }
   return new Date(value).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -218,15 +259,19 @@ function formatDate(value: string): string {
   });
 }
 
-function centsToMonthlyDollars(cents: number): string {
-  return String(Math.round(cents / 1200));
+function formatMonthLabel(month: number | null): string {
+  return month === null ? "No break-even in horizon" : `Month ${month}`;
 }
 
-function buildPayload(form: FormState): RentVsBuyInputPayload {
+function formatYearLabel(year: number | null): string {
+  return year === null ? "No break-even in horizon" : `Year ${year}`;
+}
+
+function buildRentPayload(form: FormState): RentVsBuyInputPayload {
   return {
     target_home_price_cents: dollarsToCents(form.targetHomePrice),
     down_payment_cents: dollarsToCents(form.downPayment),
-    loan_term_years: Number(form.loanTermYears) as 15 | 30,
+    loan_term_years: Number(form.loanTermYears) as 15 | 20 | 30,
     expected_years_in_home: Number(form.expectedYearsInHome),
     current_monthly_rent_cents: dollarsToCents(form.monthlyRent),
     annual_household_income_cents: dollarsToCents(form.annualIncome),
@@ -251,23 +296,6 @@ function buildRetirementPayload(form: RetirementFormState): RetirementInputPaylo
     current_portfolio_cents: dollarsToCents(form.currentPortfolio),
     annual_spending_cents: dollarsToCents(form.annualSpending),
     annual_guaranteed_income_cents: dollarsToCents(form.annualGuaranteedIncome),
-    retirement_years: Number(form.retirementYears),
-    expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
-    risk_profile: form.riskProfile,
-    loss_behavior: form.lossBehavior,
-  };
-}
-
-function buildCollegeVsRetirementPayload(
-  form: CollegeVsRetirementFormState,
-): CollegeVsRetirementInputPayload {
-  return {
-    current_retirement_savings_cents: dollarsToCents(form.currentRetirementSavings),
-    current_college_savings_cents: dollarsToCents(form.currentCollegeSavings),
-    annual_savings_budget_cents: dollarsToCents(form.annualSavingsBudget),
-    annual_college_cost_cents: dollarsToCents(form.annualCollegeCost),
-    years_until_college: Number(form.yearsUntilCollege),
-    years_in_college: Number(form.yearsInCollege),
     retirement_years: Number(form.retirementYears),
     expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
     risk_profile: form.riskProfile,
@@ -302,6 +330,46 @@ function buildJobOfferPayload(form: JobOfferFormState): JobOfferInputPayload {
   };
 }
 
+function buildCollegePayload(form: CollegeVsRetirementFormState): CollegeVsRetirementInputPayload {
+  return {
+    current_retirement_savings_cents: dollarsToCents(form.currentRetirementSavings),
+    current_college_savings_cents: dollarsToCents(form.currentCollegeSavings),
+    annual_savings_budget_cents: dollarsToCents(form.annualSavingsBudget),
+    annual_college_cost_cents: dollarsToCents(form.annualCollegeCost),
+    years_until_college: Number(form.yearsUntilCollege),
+    years_in_college: Number(form.yearsInCollege),
+    retirement_years: Number(form.retirementYears),
+    expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
+    risk_profile: form.riskProfile,
+    loss_behavior: form.lossBehavior,
+  };
+}
+
+function snapshotToAssumptionForm(snapshot: Record<string, unknown>): AssumptionFormState {
+  return {
+    mortgageRate: rateToPercentString(Number(snapshot.mortgage_rate ?? 0), 2),
+    propertyTaxRate: rateToPercentString(Number(snapshot.property_tax_rate ?? 0), 2),
+    monthlyHomeInsurance: centsToMonthlyDollars(Number(snapshot.annual_home_insurance_cents ?? 0)),
+    rentGrowthRate: rateToPercentString(Number(snapshot.annual_rent_growth_rate ?? 0), 2),
+    maintenanceRate: rateToPercentString(Number(snapshot.maintenance_rate ?? 0), 2),
+    sellerClosingRate: rateToPercentString(Number(snapshot.selling_cost_rate ?? 0), 2),
+    buyerClosingRate: rateToPercentString(Number(snapshot.buyer_closing_cost_rate ?? 0), 2),
+  };
+}
+
+function currentAssumptionsToBaseline(payload: CurrentAssumptionsEnvelope): AssumptionBaseline {
+  return {
+    assumptionsSnapshot: payload.assumptions as unknown as Record<string, unknown>,
+    auditTrail: payload.audit_trail.map((item) => ({
+      label: item.name ?? item.parameter ?? "Assumption",
+      value: item.value ?? null,
+      source: item.source,
+      last_updated: item.last_updated ?? item.sourced_at ?? null,
+    })),
+    assumptionForm: snapshotToAssumptionForm(payload.assumptions as unknown as Record<string, unknown>),
+  };
+}
+
 function buildAssumptionOverrides(
   form: AssumptionFormState,
   baseline: AssumptionBaseline | null,
@@ -315,20 +383,20 @@ function buildAssumptionOverrides(
     selling_cost_rate: percentToRate(form.sellerClosingRate),
     buyer_closing_cost_rate: percentToRate(form.buyerClosingRate),
   };
-  if (baseline === null) {
+  if (!baseline) {
     return candidate;
   }
 
   const baselineCandidate: AssumptionOverridesPayload = {
     mortgage_rate: percentToRate(baseline.assumptionForm.mortgageRate),
     property_tax_rate: percentToRate(baseline.assumptionForm.propertyTaxRate),
-    annual_home_insurance_cents:
-      dollarsToCents(baseline.assumptionForm.monthlyHomeInsurance) * 12,
+    annual_home_insurance_cents: dollarsToCents(baseline.assumptionForm.monthlyHomeInsurance) * 12,
     annual_rent_growth_rate: percentToRate(baseline.assumptionForm.rentGrowthRate),
     maintenance_rate: percentToRate(baseline.assumptionForm.maintenanceRate),
     selling_cost_rate: percentToRate(baseline.assumptionForm.sellerClosingRate),
     buyer_closing_cost_rate: percentToRate(baseline.assumptionForm.buyerClosingRate),
   };
+
   const overrides = Object.fromEntries(
     Object.entries(candidate).filter(
       ([key, value]) => baselineCandidate[key as keyof AssumptionOverridesPayload] !== value,
@@ -337,19 +405,19 @@ function buildAssumptionOverrides(
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
-function buildAnalyzeRequestPayload(
+function buildRentReportRequest(
   form: FormState,
   assumptionForm: AssumptionFormState,
   baseline: AssumptionBaseline | null,
 ) {
-  const payload: CreateScenarioPayload | {
+  const payload: {
     input: RentVsBuyInputPayload;
     simulation_seed: number;
     assumption_overrides?: AssumptionOverridesPayload;
     assumptions_snapshot?: Record<string, unknown>;
-    audit_trail_snapshot?: AuditTrailItem[];
+    audit_trail_snapshot?: ReportAuditTrailRow[];
   } = {
-    input: buildPayload(form),
+    input: buildRentPayload(form),
     simulation_seed: 7,
   };
   const overrides = buildAssumptionOverrides(assumptionForm, baseline);
@@ -366,1944 +434,2252 @@ function buildAnalyzeRequestPayload(
 function buildScenarioPayload(
   form: FormState,
   assumptionForm: AssumptionFormState,
-  userId: string,
   baseline: AssumptionBaseline | null,
 ): CreateScenarioPayload {
   return {
-    ...buildAnalyzeRequestPayload(form, assumptionForm, baseline),
-    user_id: userId,
+    ...buildRentReportRequest(form, assumptionForm, baseline),
+    user_id: "anonymous",
     idempotency_key: crypto.randomUUID(),
   };
 }
 
-function readSnapshotValue(
-  snapshot: Record<string, unknown>,
-  key: keyof RentVsBuyInputPayload,
-): unknown {
-  return snapshot[key] ?? null;
-}
-
-function snapshotToPayload(snapshot: Record<string, unknown>): RentVsBuyInputPayload {
-  return {
-    target_home_price_cents: Number(readSnapshotValue(snapshot, "target_home_price_cents") ?? 0),
-    down_payment_cents: Number(readSnapshotValue(snapshot, "down_payment_cents") ?? 0),
-    loan_term_years: Number(
-      readSnapshotValue(snapshot, "loan_term_years") ?? 30,
-    ) as 15 | 30,
-    expected_years_in_home: Number(
-      readSnapshotValue(snapshot, "expected_years_in_home") ?? 7,
-    ),
-    current_monthly_rent_cents: Number(
-      readSnapshotValue(snapshot, "current_monthly_rent_cents") ?? 0,
-    ),
-    annual_household_income_cents: Number(
-      readSnapshotValue(snapshot, "annual_household_income_cents") ?? 0,
-    ),
-    current_savings_cents: Number(readSnapshotValue(snapshot, "current_savings_cents") ?? 0),
-    monthly_savings_cents: Number(readSnapshotValue(snapshot, "monthly_savings_cents") ?? 0),
-    expected_home_appreciation_rate: Number(
-      readSnapshotValue(snapshot, "expected_home_appreciation_rate") ?? 0,
-    ),
-    expected_investment_return_rate: Number(
-      readSnapshotValue(snapshot, "expected_investment_return_rate") ?? 0,
-    ),
-    risk_profile: String(
-      readSnapshotValue(snapshot, "risk_profile") ?? "moderate",
-    ) as RentVsBuyInputPayload["risk_profile"],
-    loss_behavior: String(
-      readSnapshotValue(snapshot, "loss_behavior") ?? "hold",
-    ) as RentVsBuyInputPayload["loss_behavior"],
-    income_stability: String(
-      readSnapshotValue(snapshot, "income_stability") ?? "stable",
-    ) as RentVsBuyInputPayload["income_stability"],
-    employment_tied_to_local_economy: Boolean(
-      readSnapshotValue(snapshot, "employment_tied_to_local_economy"),
-    ),
-    current_housing_status: String(
-      readSnapshotValue(snapshot, "current_housing_status") ?? "renting",
-    ) as RentVsBuyInputPayload["current_housing_status"],
-    market_region: String(readSnapshotValue(snapshot, "market_region") ?? "national"),
-    marginal_tax_rate: Number(readSnapshotValue(snapshot, "marginal_tax_rate") ?? 0.24),
-    itemizes_deductions: Boolean(readSnapshotValue(snapshot, "itemizes_deductions")),
-    filing_status: String(
-      readSnapshotValue(snapshot, "filing_status") ?? "married_filing_jointly",
-    ) as RentVsBuyInputPayload["filing_status"],
-  };
-}
-
-function snapshotToForm(snapshot: Record<string, unknown>): FormState {
-  return {
-    targetHomePrice: String(
-      Number(readSnapshotValue(snapshot, "target_home_price_cents") ?? 0) / 100,
-    ),
-    downPayment: String(Number(readSnapshotValue(snapshot, "down_payment_cents") ?? 0) / 100),
-    loanTermYears: String(
-      readSnapshotValue(snapshot, "loan_term_years") ?? "30",
-    ) as "15" | "30",
-    expectedYearsInHome: String(readSnapshotValue(snapshot, "expected_years_in_home") ?? "7"),
-    monthlyRent: String(
-      Number(readSnapshotValue(snapshot, "current_monthly_rent_cents") ?? 0) / 100,
-    ),
-    annualIncome: String(
-      Number(readSnapshotValue(snapshot, "annual_household_income_cents") ?? 0) / 100,
-    ),
-    currentSavings: String(
-      Number(readSnapshotValue(snapshot, "current_savings_cents") ?? 0) / 100,
-    ),
-    monthlySavings: String(
-      Number(readSnapshotValue(snapshot, "monthly_savings_cents") ?? 0) / 100,
-    ),
-    appreciationRate: String(
-      Number(readSnapshotValue(snapshot, "expected_home_appreciation_rate") ?? 0) * 100,
-    ),
-    investmentReturnRate: String(
-      Number(readSnapshotValue(snapshot, "expected_investment_return_rate") ?? 0) * 100,
-    ),
-    riskProfile: String(
-      readSnapshotValue(snapshot, "risk_profile") ?? "moderate",
-    ) as FormState["riskProfile"],
-    lossBehavior: String(
-      readSnapshotValue(snapshot, "loss_behavior") ?? "hold",
-    ) as FormState["lossBehavior"],
-    incomeStability: String(
-      readSnapshotValue(snapshot, "income_stability") ?? "stable",
-    ) as FormState["incomeStability"],
-    employmentTiedToLocalEconomy: Boolean(
-      readSnapshotValue(snapshot, "employment_tied_to_local_economy"),
-    ),
-    currentHousingStatus: String(
-      readSnapshotValue(snapshot, "current_housing_status") ?? "renting",
-    ) as FormState["currentHousingStatus"],
-    marketRegion: String(readSnapshotValue(snapshot, "market_region") ?? "national"),
-    marginalTaxRate: String(
-      Number(readSnapshotValue(snapshot, "marginal_tax_rate") ?? 0.24) * 100,
-    ),
-    itemizesDeductions: Boolean(readSnapshotValue(snapshot, "itemizes_deductions")),
-    filingStatus: String(
-      readSnapshotValue(snapshot, "filing_status") ?? "married_filing_jointly",
-    ) as FormState["filingStatus"],
-  };
-}
-
-function snapshotToAssumptionForm(snapshot: Record<string, unknown>): AssumptionFormState {
-  return {
-    mortgageRate: rateToPercentString(Number(snapshot.mortgage_rate ?? 0), 2),
-    propertyTaxRate: rateToPercentString(Number(snapshot.property_tax_rate ?? 0), 2),
-    monthlyHomeInsurance: centsToMonthlyDollars(Number(snapshot.annual_home_insurance_cents ?? 0)),
-    rentGrowthRate: rateToPercentString(Number(snapshot.annual_rent_growth_rate ?? 0), 2),
-    maintenanceRate: rateToPercentString(Number(snapshot.maintenance_rate ?? 0), 2),
-    sellerClosingRate: rateToPercentString(Number(snapshot.selling_cost_rate ?? 0), 2),
-    buyerClosingRate: rateToPercentString(Number(snapshot.buyer_closing_cost_rate ?? 0), 2),
-  };
-}
-
-function currentAssumptionsToForm(payload: CurrentAssumptionsEnvelope): AssumptionFormState {
-  return snapshotToAssumptionForm(payload.assumptions as unknown as Record<string, unknown>);
-}
-
-function currentAssumptionsToBaseline(
-  payload: CurrentAssumptionsEnvelope | null,
-): AssumptionBaseline | null {
-  if (payload === null) {
+function estimatePmiMessage(
+  form: FormState,
+  assumptions: CurrentAssumptionsEnvelope | null,
+): string | null {
+  const homePrice = dollarsToCents(form.targetHomePrice);
+  const downPayment = dollarsToCents(form.downPayment);
+  if (!homePrice || downPayment / homePrice >= 0.2) {
     return null;
   }
-  return {
-    assumptionsSnapshot: payload.assumptions as Record<string, unknown>,
-    auditTrail: payload.audit_trail,
-    assumptionForm: currentAssumptionsToForm(payload),
-  };
+  const annualPmiRate = Number(assumptions?.assumptions.annual_pmi_rate ?? 0.01);
+  const monthly = Math.round(((homePrice - downPayment) * annualPmiRate) / 12 / 100);
+  return `PMI will likely apply and adds about $${monthly.toLocaleString("en-US")}/month until you reach 20% equity.`;
 }
 
-function scenarioToBaseline(scenario: ScenarioEnvelope | null): AssumptionBaseline | null {
-  if (scenario === null) {
-    return null;
-  }
-  return {
-    assumptionsSnapshot: scenario.assumptions_snapshot,
-    auditTrail: scenario.analysis.audit_trail,
-    assumptionForm: snapshotToAssumptionForm(scenario.assumptions_snapshot),
-  };
+function buildLinePath(points: Array<{ x: number; y: number }>): string {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
 }
 
-// ── verdict helpers ───────────────────────────────────────────────────────────
-
-function verdictConfig(prob: number): {
-  label: string;
-  headline: string;
-  color: string;
-  bg: string;
-  border: string;
-} {
-  if (prob >= 0.60) {
-    return {
-      label: "Buying is the stronger move",
-      headline: `Buying outperforms renting in ${formatPercent(prob)} of simulated futures.`,
-      color: "var(--accent)",
-      bg: "rgba(36, 71, 55, 0.06)",
-      border: "rgba(36, 71, 55, 0.18)",
-    };
-  }
-  if (prob <= 0.40) {
-    return {
-      label: "Renting is the stronger move",
-      headline: `Renting outperforms buying in ${formatPercent(1 - prob)} of simulated futures.`,
-      color: "var(--danger)",
-      bg: "rgba(140, 47, 61, 0.06)",
-      border: "rgba(140, 47, 61, 0.18)",
-    };
-  }
-  return {
-    label: "This is a close call",
-    headline: `Neither option dominates — buying wins in ${formatPercent(prob)} of futures, renting in the rest.`,
-    color: "var(--muted)",
-    bg: "var(--surface-soft)",
-    border: "rgba(23, 34, 29, 0.12)",
-  };
+function normalizePoints(values: number[], width: number, height: number, min: number, max: number) {
+  const spread = max - min || 1;
+  return values.map((value, index) => ({
+    x: values.length === 1 ? width / 2 : (index / (values.length - 1)) * width,
+    y: height - ((value - min) / spread) * height,
+  }));
 }
 
-// ── main app ──────────────────────────────────────────────────────────────────
+function buildBandPath(
+  lower: Array<{ x: number; y: number }>,
+  upper: Array<{ x: number; y: number }>,
+): string {
+  const forward = upper.map((point) => `${point.x} ${point.y}`).join(" L ");
+  const backward = [...lower].reverse().map((point) => `${point.x} ${point.y}`).join(" L ");
+  return `M ${forward} L ${backward} Z`;
+}
 
-function App() {
+function openPrintDialog(): void {
+  window.print();
+}
+
+export default function App() {
   const [activeModule, setActiveModule] = useState<ModuleId>("rent-vs-buy");
-  const [form, setForm] = useState<FormState>(defaultFormState);
-  const [retirementForm, setRetirementForm] = useState<RetirementFormState>(
-    defaultRetirementFormState,
-  );
-  const [collegeVsRetirementForm, setCollegeVsRetirementForm] =
-    useState<CollegeVsRetirementFormState>(defaultCollegeVsRetirementFormState);
-  const [jobOfferForm, setJobOfferForm] = useState<JobOfferFormState>(defaultJobOfferFormState);
-  const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionFormState);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [phases, setPhases] = useState<Record<LiveModuleId, ModulePhase>>({
+    "rent-vs-buy": "input",
+    "job-offer": "input",
+    "retirement-survival": "input",
+    "college-vs-retirement": "input",
+  });
+  const [steps, setSteps] = useState<Record<LiveModuleId, number>>({
+    "rent-vs-buy": 0,
+    "job-offer": 0,
+    "retirement-survival": 0,
+    "college-vs-retirement": 0,
+  });
 
-  const [analysisEnvelope, setAnalysisEnvelope] = useState<AnalysisEnvelope | null>(null);
-  const [retirementAnalysisEnvelope, setRetirementAnalysisEnvelope] =
-    useState<RetirementAnalysisEnvelope | null>(null);
-  const [collegeVsRetirementAnalysisEnvelope, setCollegeVsRetirementAnalysisEnvelope] =
-    useState<CollegeVsRetirementAnalysisEnvelope | null>(null);
-  const [jobOfferAnalysisEnvelope, setJobOfferAnalysisEnvelope] =
-    useState<JobOfferAnalysisEnvelope | null>(null);
+  const [rentForm, setRentForm] = useState<FormState>(defaultRentForm);
+  const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionForm);
+  const [jobOfferForm, setJobOfferForm] = useState<JobOfferFormState>(defaultJobOfferForm);
+  const [retirementForm, setRetirementForm] = useState<RetirementFormState>(defaultRetirementForm);
+  const [collegeForm, setCollegeForm] = useState<CollegeVsRetirementFormState>(defaultCollegeForm);
+
   const [currentAssumptions, setCurrentAssumptions] = useState<CurrentAssumptionsEnvelope | null>(null);
-  const [savedScenarios, setSavedScenarios] = useState<ScenarioEnvelope[]>([]);
-  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
-  const [userId, setUserId] = useState("");
-
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [assumptionError, setAssumptionError] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const [rentReportEnvelope, setRentReportEnvelope] = useState<ReportEnvelope<RentVsBuyReport> | null>(null);
+  const [jobOfferReportEnvelope, setJobOfferReportEnvelope] = useState<ReportEnvelope<JobOfferReport> | null>(null);
+  const [retirementReportEnvelope, setRetirementReportEnvelope] = useState<ReportEnvelope<RetirementSurvivalReport> | null>(null);
+  const [collegeReportEnvelope, setCollegeReportEnvelope] = useState<ReportEnvelope<CollegeVsRetirementReport> | null>(null);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingIndex, setLoadingIndex] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [auditSheet, setAuditSheet] = useState<{ title: string; rows: ReportAuditTrailRow[] } | null>(null);
 
-  // ── init user id ──
-  useEffect(() => {
-    const stored = window.localStorage.getItem("ffc-user-id");
-    if (stored) {
-      setUserId(stored);
-      return;
-    }
-    const generated = `ffc-${crypto.randomUUID()}`;
-    window.localStorage.setItem("ffc-user-id", generated);
-    setUserId(generated);
-  }, []);
+  const activeLiveModule = activeModule === "debt-payoff-vs-invest" ? null : activeModule;
+  const activeMeta = modules.find((module) => module.id === activeModule)!;
+  const activePhase = activeLiveModule ? phases[activeLiveModule] : "input";
+  const activeStep = activeLiveModule ? steps[activeLiveModule] : 0;
+  const activeLoadingMessages = activeLiveModule ? loadingMessages[activeLiveModule] : [];
+  const currentBaseline = useMemo(
+    () => (currentAssumptions ? currentAssumptionsToBaseline(currentAssumptions) : null),
+    [currentAssumptions],
+  );
+  const pmiMessage = useMemo(() => estimatePmiMessage(rentForm, currentAssumptions), [rentForm, currentAssumptions]);
 
   useEffect(() => {
-    void getCurrentRentVsBuyAssumptions()
+    let active = true;
+    getCurrentRentVsBuyAssumptions()
       .then((payload) => {
+        if (!active) {
+          return;
+        }
         startTransition(() => {
           setCurrentAssumptions(payload);
-          setAssumptionForm(currentAssumptionsToForm(payload));
-          setForm((current) => ({
-            ...current,
-            appreciationRate: rateToPercentString(
-              payload.assumptions.monte_carlo.annual_appreciation_mean,
-              1,
-            ),
-          }));
+          setAssumptionForm(currentAssumptionsToBaseline(payload).assumptionForm);
         });
       })
       .catch(() => {
-        setAssumptionError("Live defaults could not be refreshed. Using local fallback assumptions.");
+        if (!active) {
+          return;
+        }
+        setAssumptionError(
+          "We couldn't fetch the latest mortgage rate. Results use our last known defaults until the live feed responds.",
+        );
       });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // ── load saved scenarios ──
   useEffect(() => {
-    if (!userId) return;
-    void listScenarios(userId)
-      .then((r) => {
-        startTransition(() => setSavedScenarios(r.items));
-      })
-      .catch(() => {
-        setSaveError("Saved scenarios could not be loaded.");
-      });
-  }, [userId]);
+    if (!isLoading || !activeLiveModule) {
+      setLoadingIndex(0);
+      return;
+    }
+    setLoadingIndex(0);
+    const interval = window.setInterval(() => {
+      setLoadingIndex((current) => Math.min(current + 1, loadingMessages[activeLiveModule].length - 1));
+    }, 800);
+    return () => window.clearInterval(interval);
+  }, [activeLiveModule, isLoading]);
 
-  const selectedScenario =
-    savedScenarios.find((s) => s.scenario_id === selectedScenarioId) ?? null;
-  const assumptionBaseline =
-    scenarioToBaseline(selectedScenario) ?? currentAssumptionsToBaseline(currentAssumptions);
-  const activeAnalysis = selectedScenario?.analysis ?? analysisEnvelope?.analysis ?? null;
-  const activeRetirementAnalysis = retirementAnalysisEnvelope?.analysis ?? null;
-  const activeCollegeVsRetirementAnalysis =
-    collegeVsRetirementAnalysisEnvelope?.analysis ?? null;
-  const activeJobOfferAnalysis = jobOfferAnalysisEnvelope?.analysis ?? null;
-  const activeModelVersion =
-    selectedScenario?.model_version ?? analysisEnvelope?.model_version ?? null;
-  const costBreakdown = activeAnalysis?.deterministic.first_year_cost_breakdown ?? null;
-  const yearlyRows = activeAnalysis?.deterministic.yearly_rows ?? [];
-  const hasResult = activeAnalysis !== null;
+  function setPhase(module: LiveModuleId, phase: ModulePhase): void {
+    setPhases((current) => ({ ...current, [module]: phase }));
+  }
 
-  // ── handlers ──
-  async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
+  function setStep(module: LiveModuleId, step: number): void {
+    setSteps((current) => ({ ...current, [module]: step }));
+  }
+
+  async function handleRunRentVsBuy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setAnalysisError(null);
-    setSaveSuccess(false);
-    setIsAnalyzing(true);
+    setErrorMessage(null);
+    setSaveMessage(null);
+    setIsLoading(true);
     try {
-      const request = buildAnalyzeRequestPayload(form, assumptionForm, assumptionBaseline);
-      setSelectedScenarioId(null);
-      const r = await analyzeRentVsBuy(request);
-      startTransition(() => setAnalysisEnvelope(r));
-    } catch (e: unknown) {
-      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
+      const report = await buildRentVsBuyReport(buildRentReportRequest(rentForm, assumptionForm, currentBaseline));
+      startTransition(() => {
+        setRentReportEnvelope(report);
+        setPhase("rent-vs-buy", "result");
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "We couldn't run the housing analysis.");
     } finally {
-      setIsAnalyzing(false);
+      setIsLoading(false);
     }
   }
 
-  async function handleRetirementAnalyze(event: FormEvent<HTMLFormElement>) {
+  async function handleRunJobOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setAnalysisError(null);
-    setIsAnalyzing(true);
+    setErrorMessage(null);
+    setIsLoading(true);
     try {
-      const response = await analyzeRetirementSurvival({
-        input: buildRetirementPayload(retirementForm),
-        simulation_seed: 7,
-      });
-      startTransition(() => setRetirementAnalysisEnvelope(response));
-    } catch (e: unknown) {
-      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }
-
-  async function handleCollegeVsRetirementAnalyze(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAnalysisError(null);
-    setIsAnalyzing(true);
-    try {
-      const response = await analyzeCollegeVsRetirement({
-        input: buildCollegeVsRetirementPayload(collegeVsRetirementForm),
-        simulation_seed: 7,
-      });
-      startTransition(() => setCollegeVsRetirementAnalysisEnvelope(response));
-    } catch (e: unknown) {
-      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }
-
-  async function handleJobOfferAnalyze(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAnalysisError(null);
-    setIsAnalyzing(true);
-    try {
-      const response = await analyzeJobOffer({
+      const report = await buildJobOfferReport({
         input: buildJobOfferPayload(jobOfferForm),
         simulation_seed: 7,
       });
-      startTransition(() => setJobOfferAnalysisEnvelope(response));
-    } catch (e: unknown) {
-      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
+      startTransition(() => {
+        setJobOfferReportEnvelope(report);
+        setPhase("job-offer", "result");
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "We couldn't compare the offers.");
     } finally {
-      setIsAnalyzing(false);
+      setIsLoading(false);
     }
   }
 
-  async function handleSaveScenario() {
-    if (!userId) return;
-    setSaveError(null);
-    setSaveSuccess(false);
+  async function handleRunRetirement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      const report = await buildRetirementSurvivalReport({
+        input: buildRetirementPayload(retirementForm),
+        simulation_seed: 7,
+      });
+      startTransition(() => {
+        setRetirementReportEnvelope(report);
+        setPhase("retirement-survival", "result");
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "We couldn't run the retirement analysis.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleRunCollege(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      const report = await buildCollegeVsRetirementReport({
+        input: buildCollegePayload(collegeForm),
+        simulation_seed: 7,
+      });
+      startTransition(() => {
+        setCollegeReportEnvelope(report);
+        setPhase("college-vs-retirement", "result");
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "We couldn't compare the two family goals.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleSaveRentAnalysis() {
+    setSaveMessage(null);
     setIsSaving(true);
     try {
-      const r = await saveRentVsBuyScenario(
-        buildScenarioPayload(form, assumptionForm, userId, assumptionBaseline),
-      );
-      startTransition(() => {
-        setSavedScenarios((cur) => [
-          r,
-          ...cur.filter((s) => s.scenario_id !== r.scenario_id),
-        ]);
-        setSelectedScenarioId(r.scenario_id);
-        setAnalysisEnvelope(null);
-        setSaveSuccess(true);
-      });
-    } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : "Save failed.");
+      await saveRentVsBuyScenario(buildScenarioPayload(rentForm, assumptionForm, currentBaseline));
+      setSaveMessage("Analysis saved. You can come back to this housing scenario later.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't save this analysis.");
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleDownloadReport() {
-    setSaveError(null);
-    setIsGeneratingReport(true);
+  async function handleDownloadRentPdf() {
+    if (!rentReportEnvelope) {
+      return;
+    }
+    setIsGeneratingPdf(true);
     try {
-      const r = await buildRentVsBuyReport({
-        input: selectedScenario
-          ? snapshotToPayload(selectedScenario.inputs_snapshot)
-          : buildPayload(form),
-        simulation_seed: 7,
-        assumption_overrides: buildAssumptionOverrides(assumptionForm, assumptionBaseline),
-        assumptions_snapshot: assumptionBaseline?.assumptionsSnapshot,
-        audit_trail_snapshot: assumptionBaseline?.auditTrail,
-      });
       const [{ pdf }, { RentVsBuyReportDocument }] = await Promise.all([
         import("@react-pdf/renderer"),
         import("./ReportDocument"),
       ]);
-      const blob = await pdf(<RentVsBuyReportDocument report={r.report} />).toBlob();
+      const blob = await pdf(<RentVsBuyReportDocument report={rentReportEnvelope.report} />).toBlob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `family-financial-compass-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `family-financial-compass-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
       URL.revokeObjectURL(url);
-    } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : "Report generation failed.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
     } finally {
-      setIsGeneratingReport(false);
+      setIsGeneratingPdf(false);
     }
   }
 
-  const activeModuleMeta = modules.find((m) => m.id === activeModule)!;
+  async function handleDownloadJobOfferPdf() {
+    if (!jobOfferReportEnvelope) {
+      return;
+    }
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { JobOfferReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <JobOfferReportDocument report={jobOfferReportEnvelope.report} />,
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `family-financial-compass-job-offer-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleDownloadRetirementPdf() {
+    if (!retirementReportEnvelope) {
+      return;
+    }
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { RetirementSurvivalReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <RetirementSurvivalReportDocument report={retirementReportEnvelope.report} />,
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `family-financial-compass-retirement-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleDownloadCollegePdf() {
+    if (!collegeReportEnvelope) {
+      return;
+    }
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { CollegeVsRetirementReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <CollegeVsRetirementReportDocument report={collegeReportEnvelope.report} />,
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `family-financial-compass-college-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  function openAuditSheet(title: string, rows: ReportAuditTrailRow[]) {
+    setAuditSheet({ title, rows });
+  }
+
+  function renderInputPhase() {
+    if (!activeLiveModule) {
+      return (
+        <section className="panel panel--placeholder">
+          <span className="section-kicker">Queued engine</span>
+          <h2>{activeMeta.label}</h2>
+          <p>{activeMeta.description}</p>
+          <p className="muted-block">
+            The core family-finance suite is complete. This module stays out of the way until it
+            earns its place.
+          </p>
+        </section>
+      );
+    }
+
+    switch (activeLiveModule) {
+      case "rent-vs-buy":
+        return (
+          <form className="panel" onSubmit={handleRunRentVsBuy}>
+            <PhaseRail currentPhase="input" step={activeStep} steps={phaseLabels["rent-vs-buy"]} />
+            <header className="panel-header">
+              <span className="section-kicker">Phase 1 · Input</span>
+              <h2>Rent vs buy</h2>
+              <p>
+                Answer only the questions that materially move the model. Everything else uses
+                sourced defaults you can inspect.
+              </p>
+            </header>
+            {activeStep === 0 && (
+              <div className="step-layout">
+                <FieldGroup title="The home" description="Start with the purchase itself.">
+                  <CurrencyField
+                    label="Target home price"
+                    value={rentForm.targetHomePrice}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, targetHomePrice: value }))
+                    }
+                  />
+                  <CurrencyField
+                    label="Down payment"
+                    value={rentForm.downPayment}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, downPayment: value }))
+                    }
+                    hint={pmiMessage ?? undefined}
+                  />
+                  <SegmentedField
+                    label="Loan term"
+                    value={rentForm.loanTermYears}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, loanTermYears: value as "15" | "20" | "30" }))
+                    }
+                    options={[
+                      { value: "15", label: "15 years" },
+                      { value: "20", label: "20 years" },
+                      { value: "30", label: "30 years" },
+                    ]}
+                    hint="The current model supports standard 15-year, 20-year, and 30-year fixed terms."
+                  />
+                </FieldGroup>
+              </div>
+            )}
+            {activeStep === 1 && (
+              <div className="step-layout">
+                <FieldGroup
+                  title="Your situation"
+                  description="Focus on rent, income, and available cash."
+                >
+                  <CurrencyField
+                    label="Current monthly rent"
+                    value={rentForm.monthlyRent}
+                    onChange={(value) => setRentForm((current) => ({ ...current, monthlyRent: value }))}
+                    suffix="/mo"
+                  />
+                  <CurrencyField
+                    label="Annual household income"
+                    value={rentForm.annualIncome}
+                    onChange={(value) => setRentForm((current) => ({ ...current, annualIncome: value }))}
+                  />
+                  <CurrencyField
+                    label="Current savings"
+                    value={rentForm.currentSavings}
+                    onChange={(value) => setRentForm((current) => ({ ...current, currentSavings: value }))}
+                  />
+                  <CurrencyField
+                    label="Monthly savings you can contribute"
+                    value={rentForm.monthlySavings}
+                    onChange={(value) => setRentForm((current) => ({ ...current, monthlySavings: value }))}
+                    suffix="/mo"
+                  />
+                </FieldGroup>
+              </div>
+            )}
+            {activeStep === 2 && (
+              <div className="step-layout">
+                <FieldGroup
+                  title="Your plans"
+                  description="This is where the time horizon and expected returns matter most."
+                >
+                  <SliderField
+                    label="How many years do you plan to stay?"
+                    min={1}
+                    max={15}
+                    step={1}
+                    value={rentForm.expectedYearsInHome}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, expectedYearsInHome: value }))
+                    }
+                    display={`${rentForm.expectedYearsInHome} years`}
+                  />
+                  <PresetField
+                    label="Expected home appreciation"
+                    value={rentForm.appreciationRate}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, appreciationRate: value }))
+                    }
+                    presets={[
+                      { label: "Conservative · 2%", value: "2.0" },
+                      { label: "Moderate · 3.5%", value: "3.5" },
+                      { label: "Optimistic · 5%", value: "5.0" },
+                    ]}
+                    suffix="% / yr"
+                  />
+                  <PresetField
+                    label="Investment return if you rent"
+                    value={rentForm.investmentReturnRate}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, investmentReturnRate: value }))
+                    }
+                    presets={[
+                      { label: "Conservative · 5%", value: "5.0" },
+                      { label: "Moderate · 7%", value: "7.0" },
+                      { label: "Aggressive · 9%", value: "9.0" },
+                    ]}
+                    suffix="% / yr"
+                  />
+                </FieldGroup>
+              </div>
+            )}
+            {activeStep === 3 && (
+              <div className="step-layout">
+                <FieldGroup
+                  title="Tax and behavior"
+                  description="The model stays descriptive, but these choices change the economics."
+                >
+                  <SelectField
+                    label="Marginal tax rate"
+                    value={rentForm.marginalTaxRate}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, marginalTaxRate: value }))
+                    }
+                    options={taxBracketOptions}
+                  />
+                  <SegmentedField
+                    label="Filing status"
+                    value={rentForm.filingStatus}
+                    onChange={(value) =>
+                      setRentForm((current) => ({
+                        ...current,
+                        filingStatus: value as FormState["filingStatus"],
+                      }))
+                    }
+                    options={[
+                      { value: "single", label: "Single" },
+                      { value: "married_filing_jointly", label: "Married" },
+                    ]}
+                  />
+                  <SegmentedField
+                    label="Do you itemize deductions?"
+                    value={rentForm.itemizesDeductions ? "yes" : "no"}
+                    onChange={(value) =>
+                      setRentForm((current) => ({ ...current, itemizesDeductions: value === "yes" }))
+                    }
+                    options={[
+                      { value: "no", label: "No" },
+                      { value: "yes", label: "Yes" },
+                    ]}
+                  />
+                  <SegmentedField
+                    label="If markets dropped 30%"
+                    value={rentForm.lossBehavior}
+                    onChange={(value) =>
+                      setRentForm((current) => ({
+                        ...current,
+                        lossBehavior: value as FormState["lossBehavior"],
+                      }))
+                    }
+                    options={[
+                      { value: "hold", label: "Hold" },
+                      { value: "sell_to_cash", label: "Sell" },
+                      { value: "buy_more", label: "Buy more" },
+                    ]}
+                  />
+                  <SegmentedField
+                    label="Is your job tied to the local economy?"
+                    value={rentForm.employmentTiedToLocalEconomy ? "yes" : "no"}
+                    onChange={(value) =>
+                      setRentForm((current) => ({
+                        ...current,
+                        employmentTiedToLocalEconomy: value === "yes",
+                      }))
+                    }
+                    options={[
+                      { value: "no", label: "No" },
+                      { value: "yes", label: "Yes" },
+                    ]}
+                  />
+                  <SegmentedField
+                    label="Market region"
+                    value={rentForm.marketRegion}
+                    onChange={(value) => setRentForm((current) => ({ ...current, marketRegion: value }))}
+                    options={[
+                      { value: "national", label: "National" },
+                      { value: "coastal_high_cost", label: "Coastal" },
+                      { value: "midwest_stable", label: "Midwest" },
+                      { value: "sunbelt_growth", label: "Sunbelt" },
+                    ]}
+                  />
+                </FieldGroup>
+
+                <FieldGroup
+                  title="Live assumptions"
+                  description="Defaults are fetched daily. You can still test a different housing scenario before you run it."
+                >
+                  {assumptionError && <InlineNotice tone="warning">{assumptionError}</InlineNotice>}
+                  {currentAssumptions && (
+                    <InlineNotice tone="muted">
+                      Using {currentAssumptions.source} data last cached on{" "}
+                      {formatDate(currentAssumptions.cache_date)}.
+                    </InlineNotice>
+                  )}
+                  <SliderField
+                    label="Mortgage rate"
+                    min={3}
+                    max={10}
+                    step={0.01}
+                    value={assumptionForm.mortgageRate}
+                    onChange={(value) =>
+                      setAssumptionForm((current) => ({ ...current, mortgageRate: value }))
+                    }
+                    display={`${assumptionForm.mortgageRate}%`}
+                  />
+                  <SliderField
+                    label="Rent growth"
+                    min={0}
+                    max={8}
+                    step={0.1}
+                    value={assumptionForm.rentGrowthRate}
+                    onChange={(value) =>
+                      setAssumptionForm((current) => ({ ...current, rentGrowthRate: value }))
+                    }
+                    display={`${assumptionForm.rentGrowthRate}% / yr`}
+                  />
+                  <SliderField
+                    label="Property tax"
+                    min={0}
+                    max={4}
+                    step={0.01}
+                    value={assumptionForm.propertyTaxRate}
+                    onChange={(value) =>
+                      setAssumptionForm((current) => ({ ...current, propertyTaxRate: value }))
+                    }
+                    display={`${assumptionForm.propertyTaxRate}%`}
+                  />
+                  <SliderField
+                    label="Home insurance"
+                    min={100}
+                    max={600}
+                    step={5}
+                    value={assumptionForm.monthlyHomeInsurance}
+                    onChange={(value) =>
+                      setAssumptionForm((current) => ({ ...current, monthlyHomeInsurance: value }))
+                    }
+                    display={`$${Number(assumptionForm.monthlyHomeInsurance).toLocaleString("en-US")}/mo`}
+                  />
+                </FieldGroup>
+              </div>
+            )}
+            {errorMessage && <InlineNotice tone="warning">{errorMessage}</InlineNotice>}
+            <WizardActions
+              canGoBack={activeStep > 0}
+              onBack={() => setStep("rent-vs-buy", Math.max(0, activeStep - 1))}
+              onNext={
+                activeStep < phaseLabels["rent-vs-buy"].length - 1
+                  ? () => setStep("rent-vs-buy", activeStep + 1)
+                  : undefined
+              }
+              submitLabel="Explore your numbers"
+              isSubmitting={isLoading}
+            />
+          </form>
+        );
+      case "job-offer":
+        return (
+          <form className="panel" onSubmit={handleRunJobOffer}>
+            <PhaseRail currentPhase="input" step={activeStep} steps={phaseLabels["job-offer"]} />
+            <header className="panel-header">
+              <span className="section-kicker">Phase 1 · Input</span>
+              <h2>Job offer</h2>
+              <p>
+                Keep the form fast. Compensation, friction, and uncertainty do most of the
+                explanatory work here.
+              </p>
+            </header>
+            {activeStep === 0 && (
+              <OfferFields
+                title="Offer A · Current role"
+                form={jobOfferForm.offerA}
+                onChange={(offerA) => setJobOfferForm((current) => ({ ...current, offerA }))}
+              />
+            )}
+            {activeStep === 1 && (
+              <OfferFields
+                title="Offer B · New role"
+                form={jobOfferForm.offerB}
+                onChange={(offerB) => setJobOfferForm((current) => ({ ...current, offerB }))}
+              />
+            )}
+            {activeStep === 2 && (
+              <FieldGroup
+                title="Timeline and tax"
+                description="A high nominal comp number can still lose once taxes and friction land."
+              >
+                <SliderField
+                  label="Comparison window"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={jobOfferForm.comparisonYears}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({ ...current, comparisonYears: value }))
+                  }
+                  display={`${jobOfferForm.comparisonYears} years`}
+                />
+                <SelectField
+                  label="Marginal tax rate"
+                  value={jobOfferForm.marginalTaxRate}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({ ...current, marginalTaxRate: value }))
+                  }
+                  options={taxBracketOptions}
+                />
+                <SegmentedField
+                  label="Both offers in the same local market?"
+                  value={jobOfferForm.localMarketConcentration ? "yes" : "no"}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({
+                      ...current,
+                      localMarketConcentration: value === "yes",
+                    }))
+                  }
+                  options={[
+                    { value: "no", label: "No" },
+                    { value: "yes", label: "Yes" },
+                  ]}
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 3 && (
+              <FieldGroup
+                title="Uncertainty"
+                description="Bonus and equity volatility are the knobs that drive the probability, not the headline salary."
+              >
+                <PercentField
+                  label={`${jobOfferForm.offerA.label} bonus volatility`}
+                  value={jobOfferForm.offerA.bonusPayoutVolatility}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({
+                      ...current,
+                      offerA: { ...current.offerA, bonusPayoutVolatility: value },
+                    }))
+                  }
+                />
+                <PercentField
+                  label={`${jobOfferForm.offerB.label} bonus volatility`}
+                  value={jobOfferForm.offerB.bonusPayoutVolatility}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({
+                      ...current,
+                      offerB: { ...current.offerB, bonusPayoutVolatility: value },
+                    }))
+                  }
+                />
+                <PercentField
+                  label={`${jobOfferForm.offerA.label} equity volatility`}
+                  value={jobOfferForm.offerA.equityVolatility}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({
+                      ...current,
+                      offerA: { ...current.offerA, equityVolatility: value },
+                    }))
+                  }
+                />
+                <PercentField
+                  label={`${jobOfferForm.offerB.label} equity volatility`}
+                  value={jobOfferForm.offerB.equityVolatility}
+                  onChange={(value) =>
+                    setJobOfferForm((current) => ({
+                      ...current,
+                      offerB: { ...current.offerB, equityVolatility: value },
+                    }))
+                  }
+                />
+              </FieldGroup>
+            )}
+            {errorMessage && <InlineNotice tone="warning">{errorMessage}</InlineNotice>}
+            <WizardActions
+              canGoBack={activeStep > 0}
+              onBack={() => setStep("job-offer", Math.max(0, activeStep - 1))}
+              onNext={
+                activeStep < phaseLabels["job-offer"].length - 1
+                  ? () => setStep("job-offer", activeStep + 1)
+                  : undefined
+              }
+              submitLabel="Explore your numbers"
+              isSubmitting={isLoading}
+            />
+          </form>
+        );
+      case "retirement-survival":
+        return (
+          <form className="panel" onSubmit={handleRunRetirement}>
+            <PhaseRail
+              currentPhase="input"
+              step={activeStep}
+              steps={phaseLabels["retirement-survival"]}
+            />
+            <header className="panel-header">
+              <span className="section-kicker">Phase 1 · Input</span>
+              <h2>Retirement survival</h2>
+              <p>The question here is not whether you win. It is whether the plan lasts.</p>
+            </header>
+            {activeStep === 0 && (
+              <FieldGroup title="Portfolio" description="Anchor the plan with what you already have.">
+                <CurrencyField
+                  label="Current portfolio"
+                  value={retirementForm.currentPortfolio}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({ ...current, currentPortfolio: value }))
+                  }
+                />
+                <CurrencyField
+                  label="Annual guaranteed income"
+                  value={retirementForm.annualGuaranteedIncome}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({ ...current, annualGuaranteedIncome: value }))
+                  }
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 1 && (
+              <FieldGroup
+                title="Spending"
+                description="The gap between spending and guaranteed income determines the withdrawal burden."
+              >
+                <CurrencyField
+                  label="Annual spending"
+                  value={retirementForm.annualSpending}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({ ...current, annualSpending: value }))
+                  }
+                />
+                <SliderField
+                  label="Retirement horizon"
+                  min={10}
+                  max={40}
+                  step={1}
+                  value={retirementForm.retirementYears}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({ ...current, retirementYears: value }))
+                  }
+                  display={`${retirementForm.retirementYears} years`}
+                />
+                <PresetField
+                  label="Expected return"
+                  value={retirementForm.expectedAnnualReturn}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({ ...current, expectedAnnualReturn: value }))
+                  }
+                  presets={[
+                    { label: "Conservative · 5%", value: "5.0" },
+                    { label: "Moderate · 6%", value: "6.0" },
+                    { label: "Aggressive · 7%", value: "7.0" },
+                  ]}
+                  suffix="% / yr"
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 2 && (
+              <FieldGroup
+                title="Market behavior"
+                description="Risk profile and behavior under losses matter more than exact decimal precision here."
+              >
+                <SegmentedField
+                  label="Risk profile"
+                  value={retirementForm.riskProfile}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({
+                      ...current,
+                      riskProfile: value as RetirementFormState["riskProfile"],
+                    }))
+                  }
+                  options={[
+                    { value: "conservative", label: "Conservative" },
+                    { value: "moderate", label: "Moderate" },
+                    { value: "aggressive", label: "Aggressive" },
+                  ]}
+                />
+                <SegmentedField
+                  label="If markets dropped 30%"
+                  value={retirementForm.lossBehavior}
+                  onChange={(value) =>
+                    setRetirementForm((current) => ({
+                      ...current,
+                      lossBehavior: value as RetirementFormState["lossBehavior"],
+                    }))
+                  }
+                  options={[
+                    { value: "hold", label: "Hold" },
+                    { value: "sell_to_cash", label: "Sell" },
+                    { value: "buy_more", label: "Buy more" },
+                  ]}
+                />
+              </FieldGroup>
+            )}
+            {errorMessage && <InlineNotice tone="warning">{errorMessage}</InlineNotice>}
+            <WizardActions
+              canGoBack={activeStep > 0}
+              onBack={() => setStep("retirement-survival", Math.max(0, activeStep - 1))}
+              onNext={
+                activeStep < phaseLabels["retirement-survival"].length - 1
+                  ? () => setStep("retirement-survival", activeStep + 1)
+                  : undefined
+              }
+              submitLabel="Explore your numbers"
+              isSubmitting={isLoading}
+            />
+          </form>
+        );
+      case "college-vs-retirement":
+        return (
+          <form className="panel" onSubmit={handleRunCollege}>
+            <PhaseRail
+              currentPhase="input"
+              step={activeStep}
+              steps={phaseLabels["college-vs-retirement"]}
+            />
+            <header className="panel-header">
+              <span className="section-kicker">Phase 1 · Input</span>
+              <h2>College vs retirement</h2>
+              <p>Frame this as a tradeoff between two worthy goals, not a winner and loser.</p>
+            </header>
+            {activeStep === 0 && (
+              <FieldGroup
+                title="Balances"
+                description="Start with what the family has already saved."
+              >
+                <CurrencyField
+                  label="Current retirement savings"
+                  value={collegeForm.currentRetirementSavings}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, currentRetirementSavings: value }))
+                  }
+                />
+                <CurrencyField
+                  label="Current college savings"
+                  value={collegeForm.currentCollegeSavings}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, currentCollegeSavings: value }))
+                  }
+                />
+                <CurrencyField
+                  label="Annual savings budget"
+                  value={collegeForm.annualSavingsBudget}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, annualSavingsBudget: value }))
+                  }
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 1 && (
+              <FieldGroup
+                title="College timeline"
+                description="When tuition hits determines how much time you have to compound before withdrawals start."
+              >
+                <CurrencyField
+                  label="Annual college cost today"
+                  value={collegeForm.annualCollegeCost}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, annualCollegeCost: value }))
+                  }
+                />
+                <SliderField
+                  label="Years until college starts"
+                  min={1}
+                  max={18}
+                  step={1}
+                  value={collegeForm.yearsUntilCollege}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, yearsUntilCollege: value }))
+                  }
+                  display={`${collegeForm.yearsUntilCollege} years`}
+                />
+                <SliderField
+                  label="Years in college"
+                  min={2}
+                  max={6}
+                  step={1}
+                  value={collegeForm.yearsInCollege}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, yearsInCollege: value }))
+                  }
+                  display={`${collegeForm.yearsInCollege} years`}
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 2 && (
+              <FieldGroup
+                title="Retirement plan"
+                description="The opportunity cost of redirecting money away from retirement is long compounding time."
+              >
+                <SliderField
+                  label="Years until retirement"
+                  min={5}
+                  max={40}
+                  step={1}
+                  value={collegeForm.retirementYears}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, retirementYears: value }))
+                  }
+                  display={`${collegeForm.retirementYears} years`}
+                />
+                <PresetField
+                  label="Expected return"
+                  value={collegeForm.expectedAnnualReturn}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({ ...current, expectedAnnualReturn: value }))
+                  }
+                  presets={[
+                    { label: "Conservative · 5%", value: "5.0" },
+                    { label: "Moderate · 6%", value: "6.0" },
+                    { label: "Aggressive · 7%", value: "7.0" },
+                  ]}
+                  suffix="% / yr"
+                />
+              </FieldGroup>
+            )}
+            {activeStep === 3 && (
+              <FieldGroup
+                title="Market behavior"
+                description="Use the same risk and loss assumptions you would apply to the rest of the family balance sheet."
+              >
+                <SegmentedField
+                  label="Risk profile"
+                  value={collegeForm.riskProfile}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({
+                      ...current,
+                      riskProfile: value as CollegeVsRetirementFormState["riskProfile"],
+                    }))
+                  }
+                  options={[
+                    { value: "conservative", label: "Conservative" },
+                    { value: "moderate", label: "Moderate" },
+                    { value: "aggressive", label: "Aggressive" },
+                  ]}
+                />
+                <SegmentedField
+                  label="If markets dropped 30%"
+                  value={collegeForm.lossBehavior}
+                  onChange={(value) =>
+                    setCollegeForm((current) => ({
+                      ...current,
+                      lossBehavior: value as CollegeVsRetirementFormState["lossBehavior"],
+                    }))
+                  }
+                  options={[
+                    { value: "hold", label: "Hold" },
+                    { value: "sell_to_cash", label: "Sell" },
+                    { value: "buy_more", label: "Buy more" },
+                  ]}
+                />
+              </FieldGroup>
+            )}
+            {errorMessage && <InlineNotice tone="warning">{errorMessage}</InlineNotice>}
+            <WizardActions
+              canGoBack={activeStep > 0}
+              onBack={() => setStep("college-vs-retirement", Math.max(0, activeStep - 1))}
+              onNext={
+                activeStep < phaseLabels["college-vs-retirement"].length - 1
+                  ? () => setStep("college-vs-retirement", activeStep + 1)
+                  : undefined
+              }
+              submitLabel="Explore your numbers"
+              isSubmitting={isLoading}
+            />
+          </form>
+        );
+    }
+  }
+
+  function renderLoadingPhase() {
+    return (
+      <section className="panel loading-panel">
+        <PhaseRail currentPhase="result" step={0} steps={activeLiveModule ? phaseLabels[activeLiveModule] : []} />
+        <header className="panel-header">
+          <span className="section-kicker">Phase 2 · Result</span>
+          <h2>Working through your numbers</h2>
+          <p>This engine is doing real compute, not just waiting on a network response.</p>
+        </header>
+        <ol className="loading-steps">
+          {activeLoadingMessages.map((message, index) => (
+            <li
+              key={message}
+              className={
+                index <= loadingIndex
+                  ? "loading-steps__item loading-steps__item--active"
+                  : "loading-steps__item"
+              }
+            >
+              {message}
+            </li>
+          ))}
+        </ol>
+      </section>
+    );
+  }
+
+  function renderRentVsBuyResult(report: RentVsBuyReport) {
+    return (
+      <ResultPage
+        title="Rent vs buy"
+        onEdit={() => setPhase("rent-vs-buy", "input")}
+        onOpenAudit={() => openAuditSheet("Where these numbers come from", report.audit_trail)}
+        disclaimer={report.disclaimer}
+        actions={
+          <StickyActions
+            onExplore={() => document.getElementById("explore-rent")?.scrollIntoView({ behavior: "smooth" })}
+            onPrint={openPrintDialog}
+            onSave={handleSaveRentAnalysis}
+            onDownloadPdf={handleDownloadRentPdf}
+            isSaving={isSaving}
+            isGeneratingPdf={isGeneratingPdf}
+            saveLabel={saveMessage}
+          />
+        }
+      >
+        <VerdictCard
+          eyebrow="Phase 2 · Result"
+          title={report.narratives.summary}
+          supporting={`How this model sees it over ${report.verdict.horizon_years.toFixed(1)} years.`}
+        />
+        <ProbabilityBar
+          leftLabel="Renting better"
+          rightLabel="Buying better"
+          rightProbability={report.verdict.probability_buy_beats_rent}
+          leftDetail={`P10 · ${formatCurrency(report.verdict.p10_terminal_advantage_cents)}`}
+          centerDetail={`Base case · ${formatCurrency(report.verdict.deterministic_advantage_cents)}`}
+          rightDetail={`P90 · ${formatCurrency(report.verdict.p90_terminal_advantage_cents)}`}
+        />
+        <KeyNumberGrid
+          items={[
+            {
+              label: "Break-even point",
+              value: formatMonthLabel(report.verdict.break_even_month),
+              caption: "When buying first catches renting in the deterministic path.",
+            },
+            {
+              label: "True monthly cost to own",
+              value: formatCurrency(report.year_one_costs.true_monthly_cents),
+              caption: "Year-one all-in owner cost after modeled tax effects.",
+            },
+            {
+              label: "Cash needed to close",
+              value: formatCurrency(report.hidden_factors.initial_purchase_cash_cents),
+              caption: "Down payment plus modeled buyer closing costs.",
+            },
+          ]}
+        />
+        {report.questions.risk.warnings.length > 0 && (
+          <WarningList warnings={report.questions.risk.warnings} />
+        )}
+        <NarrativeStack
+          title="How this model sees it"
+          paragraphs={[report.narratives.verdict_driver, report.narratives.net_worth_summary]}
+        />
+        <NarrativeStack
+          title="Things to consider"
+          paragraphs={[report.narratives.question_liquidity, report.narratives.question_risk]}
+        />
+        <section id="explore-rent" className="explore-block">
+          <SectionHeader
+            title="Phase 3 · Explore"
+            description="The explore section shows where the answer comes from and how sensitive it is."
+          />
+          <ChartCard
+            title="Projected net worth over time"
+            description="The shaded gap shows how far apart renting and buying end up each year."
+          >
+            <DualLineChart
+              rows={report.yearly_net_worth}
+              series={[
+                {
+                  label: "Renting",
+                  color: "var(--accent)",
+                  values: report.yearly_net_worth.map((row) => row.rent_net_worth_cents),
+                },
+                {
+                  label: "Buying",
+                  color: "var(--accent-soft-strong)",
+                  values: report.yearly_net_worth.map((row) => row.buy_net_worth_cents),
+                },
+              ]}
+              labels={report.yearly_net_worth.map((row) => `Y${row.year}`)}
+              markerMonth={report.verdict.break_even_month}
+              markerLabel={formatMonthLabel(report.verdict.break_even_month)}
+            />
+          </ChartCard>
+          <SplitCard
+            left={
+              <InfoList
+                title="Year-one ownership costs"
+                rows={[
+                  { label: "Mortgage payment", value: formatCurrency(report.year_one_costs.principal_and_interest_cents) },
+                  { label: "Property tax", value: formatCurrency(report.year_one_costs.property_tax_cents) },
+                  { label: "Insurance", value: formatCurrency(report.year_one_costs.insurance_cents) },
+                  { label: "Maintenance", value: formatCurrency(report.year_one_costs.maintenance_cents) },
+                  { label: "PMI", value: formatCurrency(report.year_one_costs.pmi_cents) },
+                  { label: "Liquidity premium", value: formatCurrency(report.year_one_costs.liquidity_premium_cents) },
+                  { label: "True annual cost", value: formatCurrency(report.year_one_costs.true_annual_cents), strong: true },
+                ]}
+              />
+            }
+            right={
+              <InfoList
+                title="Hidden factors"
+                rows={[
+                  { label: "Equity after sale", value: formatCurrency(report.hidden_factors.equity_after_sale_horizon_cents) },
+                  { label: "Closing costs", value: formatCurrency(report.hidden_factors.closing_costs_cents) },
+                  { label: "Opportunity cost", value: formatCurrency(report.hidden_factors.opportunity_cost_future_value_cents) },
+                  { label: "Actual tax saving", value: formatCurrency(report.hidden_factors.actual_tax_saving_year_one_cents) },
+                  { label: "Capital gains tax", value: formatCurrency(report.hidden_factors.capital_gains.capital_gains_tax_cents) },
+                ]}
+              />
+            }
+          />
+          <SensitivitySection
+            title="How sensitive is this?"
+            description={`Most sensitive assumption: ${report.sensitivity.most_sensitive_label}.`}
+            rows={report.sensitivity.rows.map((row) => ({
+              label: row.label,
+              primary: row.probability_buy_beats_rent_label,
+              secondary: row.break_even_label,
+              delta: row.probability_shift_points === 0 ? "—" : `${row.probability_shift_points.toFixed(0)} pts`,
+            }))}
+          />
+        </section>
+      </ResultPage>
+    );
+  }
+
+  function renderJobOfferResult(report: JobOfferReport) {
+    const warnings = report.risk.local_market_concentration
+      ? [
+          "Both offers are in the same job market. The diversification benefit of switching employers is limited.",
+          ...report.risk.warnings,
+        ]
+      : report.risk.warnings;
+    return (
+      <ResultPage
+        title="Job offer"
+        onEdit={() => setPhase("job-offer", "input")}
+        onOpenAudit={() => openAuditSheet("Where these numbers come from", report.audit_trail)}
+        disclaimer={jobOfferReportEnvelope?.disclaimer ?? "Not financial advice."}
+        actions={
+          <StickyActions
+            onExplore={() => document.getElementById("explore-job")?.scrollIntoView({ behavior: "smooth" })}
+            onPrint={openPrintDialog}
+            onDownloadPdf={handleDownloadJobOfferPdf}
+            isGeneratingPdf={isGeneratingPdf}
+          />
+        }
+      >
+        <VerdictCard
+          eyebrow="Phase 2 · Result"
+          title={report.narratives.summary}
+          supporting="How this model sees the tradeoff between compensation, friction, and uncertainty."
+        />
+        <ProbabilityBar
+          leftLabel={report.offers.offer_a_label}
+          rightLabel={report.offers.offer_b_label}
+          rightProbability={report.verdict.probability_offer_b_wins}
+          leftDetail={`P10 · ${formatCurrency(report.risk.p10_terminal_advantage_cents)}`}
+          centerDetail={`Median · ${formatCurrency(report.risk.median_terminal_advantage_cents)}`}
+          rightDetail={`P90 · ${formatCurrency(report.risk.p90_terminal_advantage_cents)}`}
+        />
+        <KeyNumberGrid
+          items={[
+            {
+              label: "Break-even point",
+              value: formatMonthLabel(report.verdict.break_even_month),
+              caption: "When the new role overtakes the current one.",
+            },
+            {
+              label: "Deterministic advantage",
+              value: formatCurrency(report.verdict.end_of_horizon_advantage_cents),
+              caption: `${report.verdict.winner_label} leads at the end of the chosen horizon in the base case.`,
+            },
+            {
+              label: "Risk-adjusted advantage",
+              value: formatCurrency(report.verdict.utility_adjusted_advantage_cents),
+              caption: "Adjusted for the fact that losses feel worse than equivalent gains.",
+            },
+          ]}
+        />
+        {warnings.length > 0 && <WarningList warnings={warnings} />}
+        <NarrativeStack
+          title="How this model sees it"
+          paragraphs={[report.narratives.offer_comparison, report.narratives.break_even_summary]}
+        />
+        <NarrativeStack
+          title="Things to consider"
+          paragraphs={[report.narratives.hidden_costs_summary, report.narratives.risk_summary]}
+        />
+        <section id="explore-job" className="explore-block">
+          <SectionHeader
+            title="Phase 3 · Explore"
+            description="This is where the hidden costs and sensitivity become visible."
+          />
+          <ChartCard
+            title="Cumulative value over time"
+            description="The spread shows how much the switch gains or loses after the first-year friction lands."
+          >
+            <DualLineChart
+              rows={report.yearly_comparison.map((row) => ({
+                year: row.year,
+                rent_net_worth_cents: row.offer_a_cumulative_value_cents,
+                buy_net_worth_cents: row.offer_b_cumulative_value_cents,
+                difference_cents: row.offer_b_minus_offer_a_cents,
+              }))}
+              series={[
+                {
+                  label: report.offers.offer_a_label,
+                  color: "var(--accent)",
+                  values: report.yearly_comparison.map((row) => row.offer_a_cumulative_value_cents),
+                },
+                {
+                  label: report.offers.offer_b_label,
+                  color: "var(--accent-soft-strong)",
+                  values: report.yearly_comparison.map((row) => row.offer_b_cumulative_value_cents),
+                },
+              ]}
+              labels={report.yearly_comparison.map((row) => `Y${row.year}`)}
+              markerMonth={report.verdict.break_even_month}
+              markerLabel={formatMonthLabel(report.verdict.break_even_month)}
+            />
+          </ChartCard>
+          <SplitCard
+            left={
+              <ComparisonList
+                title="Offer inputs"
+                leftTitle={report.offers.offer_a_label}
+                rightTitle={report.offers.offer_b_label}
+                leftRows={report.offers.offer_a_summary}
+                rightRows={report.offers.offer_b_summary}
+              />
+            }
+            right={
+              <InfoList
+                title="Year-one costs to switch"
+                rows={[
+                  { label: "Relocation", value: formatCurrency(-report.hidden_costs.offer_b.relocation_cost_cents) },
+                  { label: "Cost-of-living change", value: formatCurrency(-report.hidden_costs.offer_b.annual_cost_of_living_delta_cents) },
+                  { label: "Commute cost", value: formatCurrency(-report.hidden_costs.offer_b.annual_commute_cost_cents) },
+                  { label: "After-tax sign-on bonus", value: formatCurrency(report.hidden_costs.offer_b.after_tax_sign_on_bonus_cents) },
+                  { label: "Net year-one switch impact", value: formatCurrency(-report.hidden_costs.offer_b_minus_offer_a_first_year_friction_cents), strong: true },
+                ]}
+              />
+            }
+          />
+          <SensitivitySection
+            title="How sensitive is this?"
+            description={`Most sensitive assumption: ${report.sensitivity.most_sensitive_label}.`}
+            rows={report.sensitivity.rows.map((row) => ({
+              label: row.label,
+              primary: row.probability_offer_b_wins_label,
+              secondary: row.break_even_label,
+              delta: row.probability_shift_points === 0 ? "—" : `${row.probability_shift_points.toFixed(0)} pts`,
+            }))}
+          />
+        </section>
+      </ResultPage>
+    );
+  }
+
+  function renderRetirementResult(report: RetirementSurvivalReport) {
+    return (
+      <ResultPage
+        title="Retirement survival"
+        onEdit={() => setPhase("retirement-survival", "input")}
+        onOpenAudit={() => openAuditSheet("Where these numbers come from", report.audit_trail)}
+        disclaimer={retirementReportEnvelope?.disclaimer ?? "Not financial advice."}
+        actions={
+          <StickyActions
+            onExplore={() => document.getElementById("explore-retirement")?.scrollIntoView({ behavior: "smooth" })}
+            onPrint={openPrintDialog}
+            onDownloadPdf={handleDownloadRetirementPdf}
+            isGeneratingPdf={isGeneratingPdf}
+          />
+        }
+      >
+        {report.verdict.probability_portfolio_survives < 0.8 && (
+          <InlineNotice tone="warning">
+            At current spending, the model shows a meaningful chance of running out of money before the end of the horizon. See the spending analysis below.
+          </InlineNotice>
+        )}
+        <VerdictCard
+          eyebrow="Phase 2 · Result"
+          title={report.narratives.summary}
+          supporting="How this model sees the odds that your portfolio lasts."
+        />
+        <ProbabilityBar
+          leftLabel="Runs short"
+          rightLabel="Portfolio lasts"
+          rightProbability={report.verdict.probability_portfolio_survives}
+          leftDetail={`P10 · ${formatCurrency(report.wealth_at_horizon.p10_terminal_wealth_cents)}`}
+          centerDetail={`Median · ${formatCurrency(report.wealth_at_horizon.median_terminal_wealth_cents)}`}
+          rightDetail={`P90 · ${formatCurrency(report.wealth_at_horizon.p90_terminal_wealth_cents)}`}
+        />
+        <KeyNumberGrid
+          items={[
+            {
+              label: "Survival probability",
+              value: formatPercent(report.verdict.probability_portfolio_survives),
+              caption: `Chance the portfolio lasts ${report.verdict.horizon_years} years.`,
+            },
+            {
+              label: "High-confidence spending rate",
+              value: formatPercent(report.verdict.safe_withdrawal_rate_95, 2),
+              caption: "Modeled 95% safe withdrawal rate.",
+            },
+            {
+              label: "Base-case depletion",
+              value: report.verdict.deterministic_depletion_year === null ? "Does not deplete" : `Year ${report.verdict.deterministic_depletion_year}`,
+              caption: "Deterministic path only, not a guarantee.",
+            },
+          ]}
+        />
+        {report.warnings.length > 0 && <WarningList warnings={report.warnings} />}
+        <NarrativeStack
+          title="How this model sees it"
+          paragraphs={[report.narratives.survival_verdict, report.narratives.withdrawal_rate_summary]}
+        />
+        <NarrativeStack
+          title="Things to consider"
+          paragraphs={[report.narratives.wealth_range_summary, report.narratives.risk_summary]}
+        />
+        <section id="explore-retirement" className="explore-block">
+          <SectionHeader
+            title="Phase 3 · Explore"
+            description="The fan chart below shows how wide the range of retirement outcomes can get."
+          />
+          <ChartCard
+            title="Portfolio path by year"
+            description="The shaded band spans the 10th to 90th percentile of simulated outcomes."
+          >
+            <FanChart rows={report.yearly_projection} />
+          </ChartCard>
+          <SplitCard
+            left={
+              <InfoList
+                title="Withdrawal analysis"
+                rows={[
+                  { label: "Net annual withdrawal", value: formatCurrency(report.withdrawal_analysis.net_annual_withdrawal_cents) },
+                  { label: "Current withdrawal rate", value: formatPercent(report.withdrawal_analysis.current_withdrawal_rate, 2) },
+                  { label: "95% safe rate", value: formatPercent(report.withdrawal_analysis.safe_withdrawal_rate_95, 2) },
+                  { label: "Safe annual spending", value: formatCurrency(report.withdrawal_analysis.safe_withdrawal_annual_cents) },
+                  { label: "Gap", value: formatCurrency(report.withdrawal_analysis.safe_withdrawal_gap_cents), strong: true },
+                ]}
+              />
+            }
+            right={
+              <InfoList
+                title="Inputs and assumptions"
+                rows={[...report.inputs_summary.slice(0, 4), ...report.assumptions_summary].map((row) => ({
+                  label: row.label,
+                  value: row.value,
+                }))}
+              />
+            }
+          />
+        </section>
+      </ResultPage>
+    );
+  }
+
+  function renderCollegeResult(report: CollegeVsRetirementReport) {
+    return (
+      <ResultPage
+        title="College vs retirement"
+        onEdit={() => setPhase("college-vs-retirement", "input")}
+        onOpenAudit={() => openAuditSheet("Where these numbers come from", report.audit_trail)}
+        disclaimer={collegeReportEnvelope?.disclaimer ?? "Not financial advice."}
+        actions={
+          <StickyActions
+            onExplore={() => document.getElementById("explore-college")?.scrollIntoView({ behavior: "smooth" })}
+            onPrint={openPrintDialog}
+            onDownloadPdf={handleDownloadCollegePdf}
+            isGeneratingPdf={isGeneratingPdf}
+          />
+        }
+      >
+        <VerdictCard
+          eyebrow="Phase 2 · Result"
+          title={report.narratives.summary}
+          supporting="How this model sees the tradeoff between student debt and retirement compounding."
+        />
+        <ProbabilityBar
+          leftLabel="College first"
+          rightLabel="Retirement first"
+          rightProbability={report.verdict.probability_retirement_first_wins}
+          leftDetail={`P10 · ${formatCurrency(report.retirement_outcomes.p10_terminal_advantage_cents)}`}
+          centerDetail={`Tradeoff · ${formatCurrency(report.verdict.end_of_horizon_advantage_cents)}`}
+          rightDetail={`P90 · ${formatCurrency(report.retirement_outcomes.p90_terminal_advantage_cents)}`}
+        />
+        <KeyNumberGrid
+          items={[
+            {
+              label: "Break-even year",
+              value: formatYearLabel(report.verdict.break_even_year),
+              caption: "When retirement-first overtakes college-first, if it does.",
+            },
+            {
+              label: "Retirement-first win probability",
+              value: formatPercent(report.verdict.probability_retirement_first_wins),
+              caption: "Share of simulated futures where retirement-first leads.",
+            },
+            {
+              label: "Risk-adjusted advantage",
+              value: formatCurrency(report.verdict.utility_adjusted_advantage_cents),
+              caption: "Tradeoff adjusted for how losses feel compared with gains.",
+            },
+          ]}
+        />
+        {report.warnings.length > 0 && <WarningList warnings={report.warnings} />}
+        <NarrativeStack
+          title="How this model sees it"
+          paragraphs={[report.narratives.allocation_verdict, report.narratives.loan_impact_summary]}
+        />
+        <NarrativeStack
+          title="Things to consider"
+          paragraphs={[report.narratives.retirement_outcome_summary, report.narratives.risk_summary]}
+        />
+        <section id="explore-college" className="explore-block">
+          <SectionHeader
+            title="Phase 3 · Explore"
+            description="This view keeps both goals visible at the same time so the tradeoff stays honest."
+          />
+          <TwoColumnOutcomeCard
+            leftTitle="College first"
+            rightTitle="Retirement first"
+            rows={[
+              {
+                label: "Student loans taken",
+                leftValue: formatCurrency(report.funding_analysis.college_first_total_loan_cents),
+                rightValue: formatCurrency(report.funding_analysis.retirement_first_total_loan_cents),
+              },
+              {
+                label: "Retirement at horizon",
+                leftValue: formatCurrency(report.retirement_outcomes.college_first_terminal_retirement_cents),
+                rightValue: formatCurrency(report.retirement_outcomes.retirement_first_terminal_retirement_cents),
+              },
+              {
+                label: "College fully funded?",
+                leftValue: report.funding_analysis.college_first_total_loan_cents === 0 ? "Yes" : "No",
+                rightValue: report.funding_analysis.retirement_first_total_loan_cents === 0 ? "Yes" : "No",
+              },
+            ]}
+          />
+          <ChartCard
+            title="Net worth path over time"
+            description="Retirement-first versus college-first across the full planning horizon."
+          >
+            <DualLineChart
+              rows={report.yearly_comparison.map((row) => ({
+                year: row.year,
+                rent_net_worth_cents: row.college_first_net_worth_cents,
+                buy_net_worth_cents: row.retirement_first_net_worth_cents,
+                difference_cents: row.retirement_first_minus_college_first_cents,
+              }))}
+              series={[
+                {
+                  label: "College first",
+                  color: "var(--accent)",
+                  values: report.yearly_comparison.map((row) => row.college_first_net_worth_cents),
+                },
+                {
+                  label: "Retirement first",
+                  color: "var(--accent-soft-strong)",
+                  values: report.yearly_comparison.map((row) => row.retirement_first_net_worth_cents),
+                },
+              ]}
+              labels={report.yearly_comparison.map((row) => `Y${row.year}`)}
+              markerMonth={report.verdict.break_even_year === null ? null : report.verdict.break_even_year * 12}
+              markerLabel={formatYearLabel(report.verdict.break_even_year)}
+            />
+          </ChartCard>
+        </section>
+      </ResultPage>
+    );
+  }
+
+  function renderResultPhase() {
+    if (!activeLiveModule) {
+      return renderInputPhase();
+    }
+    if (activeLiveModule === "rent-vs-buy" && rentReportEnvelope) {
+      return renderRentVsBuyResult(rentReportEnvelope.report);
+    }
+    if (activeLiveModule === "job-offer" && jobOfferReportEnvelope) {
+      return renderJobOfferResult(jobOfferReportEnvelope.report);
+    }
+    if (activeLiveModule === "retirement-survival" && retirementReportEnvelope) {
+      return renderRetirementResult(retirementReportEnvelope.report);
+    }
+    if (activeLiveModule === "college-vs-retirement" && collegeReportEnvelope) {
+      return renderCollegeResult(collegeReportEnvelope.report);
+    }
+    return renderInputPhase();
+  }
 
   return (
     <div className="app-shell">
-      {/* ── SIDEBAR ── */}
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand__eyebrow">Family Financial Compass</span>
-          <h1>Decision Engines</h1>
-          <p>One engine at a time. Inputs on demand. Math first.</p>
+          <span className="section-kicker">Family Financial Compass</span>
+          <h1>Clarity for the biggest family decisions.</h1>
+          <p>
+            Each tool is a decision workspace: guided inputs first, then a result you can trust,
+            then the numbers underneath it.
+          </p>
         </div>
-
-        <nav className="module-nav" aria-label="Decision engines">
-          {modules.map((m) => (
+        <nav className="module-list" aria-label="Family finance tools">
+          {modules.map((module) => (
             <button
-              key={m.id}
+              key={module.id}
               type="button"
-              className={`module-nav__item${m.id === activeModule ? " module-nav__item--active" : ""}`}
-              onClick={() => setActiveModule(m.id)}
+              className={`module-card${module.id === activeModule ? " module-card--active" : ""}`}
+              onClick={() => {
+                setActiveModule(module.id);
+                setErrorMessage(null);
+                setSaveMessage(null);
+              }}
             >
-              <strong>
-                {m.label}&ensp;
-                <span className={`badge badge--${m.status}`}>{m.status}</span>
-              </strong>
-              <span>{m.description}</span>
+              <span className="module-card__status">{module.status === "live" ? "Live" : "Queued"}</span>
+              <strong>{module.label}</strong>
+              <span>{module.description}</span>
             </button>
           ))}
         </nav>
-
-        {activeModule === "rent-vs-buy" && (
-          <section className="sidebar-card">
-            <h2>Recent saved</h2>
-            {savedScenarios.length === 0 ? (
-              <p>No saved scenarios yet.</p>
-            ) : (
-              savedScenarios.slice(0, 5).map((s) => (
-                <button
-                  key={s.scenario_id}
-                  type="button"
-                  className={`saved-item${
-                    s.scenario_id === selectedScenarioId ? " saved-item--active" : ""
-                  }`}
-                  onClick={() => {
-                    setSelectedScenarioId(s.scenario_id);
-                    setAnalysisEnvelope(null);
-                    setSaveSuccess(false);
-                    setForm(snapshotToForm(s.inputs_snapshot));
-                    setAssumptionForm(snapshotToAssumptionForm(s.assumptions_snapshot));
-                  }}
-                >
-                  <strong>
-                    {formatCurrency(
-                      Number(s.inputs_snapshot.target_home_price_cents ?? 0),
-                    )}{" "}
-                    · {String(s.inputs_snapshot.expected_years_in_home ?? "")} yr plan
-                  </strong>
-                  <span>
-                    {formatPercent(s.analysis.monte_carlo.probability_buy_beats_rent)} buy
-                    wins · {formatDate(s.created_at)}
-                  </span>
-                </button>
-              ))
-            )}
-          </section>
-        )}
       </aside>
 
-      {/* ── MAIN ── */}
-      <main className="main-pane">
-        <header className="main-header">
+      <main className="workspace">
+        <header className="workspace-header">
           <div>
-            <span className="main-header__eyebrow">
-              {activeModuleMeta.status === "live" ? "Live engine" : "Planned engine"}
+            <span className="section-kicker">
+              {activeMeta.status === "live" ? "Decision workspace" : "Queued"}
             </span>
-            <h2>{activeModuleMeta.label}</h2>
+            <h2>{activeMeta.label}</h2>
           </div>
-          <p>{activeModuleMeta.description}</p>
+          <p>{activeMeta.description}</p>
         </header>
-
-        {activeModule === "rent-vs-buy" ? (
-          <div className="rent-layout">
-            {/* ── INPUT PANEL ── */}
-            <section className="panel">
-              <div className="panel__header">
-                <div>
-                  <span className="panel__eyebrow">Inputs</span>
-                  <h3>The numbers</h3>
-                </div>
-                <p>
-                  Only inputs that materially move the result are shown here. Everything
-                  else uses calibrated, sourced defaults.
-                </p>
-              </div>
-
-              <form className="form-grid" onSubmit={handleAnalyze}>
-                {/* ── The home ── */}
-                <p className="form-section-label">The home</p>
-                <NumField label="Home price" name="targetHomePrice" value={form.targetHomePrice} onChange={setForm} suffix="USD" />
-                <NumField label="Down payment" name="downPayment" value={form.downPayment} onChange={setForm} suffix="USD" />
-                <div className="form-two-col">
-                  <SelectField
-                    label="Loan term"
-                    value={form.loanTermYears}
-                    onChange={(v) => setForm((f) => ({ ...f, loanTermYears: v as "15" | "30" }))}
-                    options={[
-                      { value: "30", label: "30 years" },
-                      { value: "15", label: "15 years" },
-                    ]}
-                  />
-                  <NumField label="Years planned" name="expectedYearsInHome" value={form.expectedYearsInHome} onChange={setForm} suffix="yrs" />
-                </div>
-
-                {/* ── Your money ── */}
-                <p className="form-section-label">Your money</p>
-                <div className="form-two-col">
-                  <NumField label="Current rent" name="monthlyRent" value={form.monthlyRent} onChange={setForm} suffix="USD/mo" />
-                  <NumField label="Annual income" name="annualIncome" value={form.annualIncome} onChange={setForm} suffix="USD" />
-                </div>
-                <div className="form-two-col">
-                  <NumField label="Current savings" name="currentSavings" value={form.currentSavings} onChange={setForm} suffix="USD" />
-                  <NumField label="Monthly savings" name="monthlySavings" value={form.monthlySavings} onChange={setForm} suffix="USD/mo" />
-                </div>
-
-                {/* ── Market ── */}
-                <p className="form-section-label">Market</p>
-                <SelectField
-                  label="Region"
-                  value={form.marketRegion}
-                  onChange={(v) => setForm((f) => ({ ...f, marketRegion: v }))}
-                  options={[
-                    { value: "national", label: "National" },
-                    { value: "coastal_high_cost", label: "Coastal — high cost" },
-                    { value: "midwest_stable", label: "Midwest — stable" },
-                    { value: "sunbelt_growth", label: "Sunbelt — growth" },
-                  ]}
-                />
-                <div className="form-two-col">
-                  <NumField label="Home appreciation" name="appreciationRate" value={form.appreciationRate} onChange={setForm} suffix="%/yr" step={0.1} />
-                  <NumField label="Investment return" name="investmentReturnRate" value={form.investmentReturnRate} onChange={setForm} suffix="%/yr" step={0.1} />
-                </div>
-
-                {/* ── Advanced toggle ── */}
-                <button
-                  type="button"
-                  className="advance-toggle"
-                  onClick={() => setShowAssumptions((v) => !v)}
-                >
-                  <span>{showAssumptions ? "▾" : "▸"}</span>
-                  Model assumptions
-                  {!showAssumptions && (
-                    <span style={{ fontWeight: 400, opacity: 0.65 }}>
-                      &ensp;(live defaults + sliders)
-                    </span>
-                  )}
-                </button>
-
-                {showAssumptions && (
-                  <div className="assumption-card">
-                    <div className="assumption-card__header">
-                      <div>
-                        <strong>Current defaults</strong>
-                        <p>
-                          {selectedScenario
-                            ? "Using the saved scenario's assumption snapshot."
-                            : currentAssumptions
-                            ? `Loaded from ${currentAssumptions.source} as of ${formatDate(currentAssumptions.cache_date)}.`
-                            : "Using local fallback defaults until the live assumption feed responds."}
-                        </p>
-                      </div>
-                    </div>
-                    {assumptionError && <p className="message message--error">{assumptionError}</p>}
-                    <div className="assumption-grid">
-                      <RangeField
-                        label="Mortgage rate"
-                        value={assumptionForm.mortgageRate}
-                        min={3}
-                        max={10}
-                        step={0.01}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, mortgageRate: value }))}
-                      />
-                      <RangeField
-                        label="Rent growth"
-                        value={assumptionForm.rentGrowthRate}
-                        min={0}
-                        max={8}
-                        step={0.1}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, rentGrowthRate: value }))}
-                      />
-                      <RangeField
-                        label="Property tax"
-                        value={assumptionForm.propertyTaxRate}
-                        min={0}
-                        max={4}
-                        step={0.01}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, propertyTaxRate: value }))}
-                      />
-                      <RangeField
-                        label="Home insurance"
-                        value={assumptionForm.monthlyHomeInsurance}
-                        min={100}
-                        max={600}
-                        step={5}
-                        prefix="$"
-                        suffix="/mo"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, monthlyHomeInsurance: value }))}
-                      />
-                      <RangeField
-                        label="Maintenance"
-                        value={assumptionForm.maintenanceRate}
-                        min={0}
-                        max={3}
-                        step={0.1}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, maintenanceRate: value }))}
-                      />
-                      <RangeField
-                        label="Buyer closing costs"
-                        value={assumptionForm.buyerClosingRate}
-                        min={0}
-                        max={6}
-                        step={0.1}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, buyerClosingRate: value }))}
-                      />
-                      <RangeField
-                        label="Seller closing"
-                        value={assumptionForm.sellerClosingRate}
-                        min={0}
-                        max={10}
-                        step={0.1}
-                        suffix="%"
-                        onChange={(value) => setAssumptionForm((f) => ({ ...f, sellerClosingRate: value }))}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  className="advance-toggle"
-                  onClick={() => setShowAdvanced((v) => !v)}
-                >
-                  <span>{showAdvanced ? "▾" : "▸"}</span>
-                  Tax &amp; profile
-                  {!showAdvanced && (
-                    <span style={{ fontWeight: 400, opacity: 0.65 }}>&ensp;(advanced)</span>
-                  )}
-                </button>
-
-                {showAdvanced && (
-                  <>
-                    <p className="form-section-label">Tax profile</p>
-                    <div className="form-two-col">
-                      <NumField label="Marginal tax rate" name="marginalTaxRate" value={form.marginalTaxRate} onChange={setForm} suffix="%" step={1} />
-                      <SelectField
-                        label="Filing status"
-                        value={form.filingStatus}
-                        onChange={(v) =>
-                          setForm((f) => ({
-                            ...f,
-                            filingStatus: v as FormState["filingStatus"],
-                          }))
-                        }
-                        options={[
-                          { value: "married_filing_jointly", label: "Married filing jointly" },
-                          { value: "single", label: "Single" },
-                        ]}
-                      />
-                    </div>
-                    <SelectField
-                      label="Itemizes deductions"
-                      value={form.itemizesDeductions ? "yes" : "no"}
-                      onChange={(v) =>
-                        setForm((f) => ({ ...f, itemizesDeductions: v === "yes" }))
-                      }
-                      options={[
-                        { value: "no", label: "No — takes standard deduction" },
-                        { value: "yes", label: "Yes — itemizes" },
-                      ]}
-                    />
-
-                    <p className="form-section-label">Behavior &amp; profile</p>
-                    <div className="form-two-col">
-                      <SelectField
-                        label="Risk tolerance"
-                        value={form.riskProfile}
-                        onChange={(v) =>
-                          setForm((f) => ({
-                            ...f,
-                            riskProfile: v as FormState["riskProfile"],
-                          }))
-                        }
-                        options={[
-                          { value: "conservative", label: "Conservative" },
-                          { value: "moderate", label: "Moderate" },
-                          { value: "aggressive", label: "Aggressive" },
-                        ]}
-                      />
-                      <SelectField
-                        label="If markets crash"
-                        value={form.lossBehavior}
-                        onChange={(v) =>
-                          setForm((f) => ({
-                            ...f,
-                            lossBehavior: v as FormState["lossBehavior"],
-                          }))
-                        }
-                        options={[
-                          { value: "hold", label: "Hold steady" },
-                          { value: "sell_to_cash", label: "Sell to cash" },
-                          { value: "buy_more", label: "Buy more" },
-                        ]}
-                      />
-                    </div>
-                    <div className="form-two-col">
-                      <SelectField
-                        label="Income type"
-                        value={form.incomeStability}
-                        onChange={(v) =>
-                          setForm((f) => ({
-                            ...f,
-                            incomeStability: v as FormState["incomeStability"],
-                          }))
-                        }
-                        options={[
-                          { value: "stable", label: "Stable — salary" },
-                          { value: "variable", label: "Variable — freelance/commission" },
-                        ]}
-                      />
-                      <SelectField
-                        label="Job tied to local area"
-                        value={form.employmentTiedToLocalEconomy ? "yes" : "no"}
-                        onChange={(v) =>
-                          setForm((f) => ({
-                            ...f,
-                            employmentTiedToLocalEconomy: v === "yes",
-                          }))
-                        }
-                        options={[
-                          { value: "no", label: "No" },
-                          { value: "yes", label: "Yes" },
-                        ]}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* ── Actions ── */}
-                <div className="form-actions">
-                  <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
-                    {isAnalyzing ? "Running 10,000 scenarios…" : "Run analysis"}
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={handleSaveScenario}
-                    disabled={isSaving || !hasResult}
-                    title={hasResult ? "Save this scenario" : "Run the analysis first"}
-                  >
-                    {isSaving ? "Saving…" : "Save"}
-                  </button>
-                </div>
-
-                {analysisError && <p className="message message--error">{analysisError}</p>}
-                {saveError && <p className="message message--error">{saveError}</p>}
-                {saveSuccess && (
-                  <p className="message" style={{ color: "var(--accent)" }}>
-                    Scenario saved.
-                  </p>
-                )}
-              </form>
-            </section>
-
-            {/* ── OUTPUT PANEL ── */}
-            <section className={`panel${!hasResult ? " panel--placeholder" : ""}`}>
-              {!hasResult ? (
-                <EmptyOutput loading={isAnalyzing} />
-              ) : (
-                <OutputPanel
-                  activeAnalysis={activeAnalysis!}
-                  activeModelVersion={activeModelVersion}
-                  costBreakdown={costBreakdown}
-                  yearlyRows={yearlyRows}
-                  isGeneratingReport={isGeneratingReport}
-                  onDownloadReport={handleDownloadReport}
-                />
-              )}
-            </section>
-          </div>
-        ) : activeModule === "retirement-survival" ? (
-          <RetirementLayout
-            form={retirementForm}
-            setForm={setRetirementForm}
-            analysis={activeRetirementAnalysis}
-            modelVersion={retirementAnalysisEnvelope?.model_version ?? null}
-            isAnalyzing={isAnalyzing}
-            analysisError={analysisError}
-            onAnalyze={handleRetirementAnalyze}
-          />
-        ) : activeModule === "college-vs-retirement" ? (
-          <CollegeVsRetirementLayout
-            form={collegeVsRetirementForm}
-            setForm={setCollegeVsRetirementForm}
-            analysis={activeCollegeVsRetirementAnalysis}
-            modelVersion={collegeVsRetirementAnalysisEnvelope?.model_version ?? null}
-            isAnalyzing={isAnalyzing}
-            analysisError={analysisError}
-            onAnalyze={handleCollegeVsRetirementAnalyze}
-          />
-        ) : activeModule === "job-offer" ? (
-          <JobOfferLayout
-            form={jobOfferForm}
-            setForm={setJobOfferForm}
-            analysis={activeJobOfferAnalysis}
-            modelVersion={jobOfferAnalysisEnvelope?.model_version ?? null}
-            isAnalyzing={isAnalyzing}
-            analysisError={analysisError}
-            onAnalyze={handleJobOfferAnalyze}
-          />
-        ) : (
-          <section className="panel panel--placeholder">
-            <div className="panel__header">
-              <div>
-                <span className="panel__eyebrow">Not built yet</span>
-                <h3>{activeModuleMeta.label}</h3>
-              </div>
-              <p>{activeModuleMeta.description}</p>
-            </div>
-            <div className="empty-state">
-              <p>This engine is in the queue.</p>
-            </div>
-          </section>
-        )}
+        {isLoading ? renderLoadingPhase() : activePhase === "input" ? renderInputPhase() : renderResultPhase()}
       </main>
+
+      <AuditSheet
+        title={auditSheet?.title ?? ""}
+        rows={auditSheet?.rows ?? []}
+        open={auditSheet !== null}
+        onClose={() => setAuditSheet(null)}
+      />
     </div>
   );
 }
 
-// ── output panel ──────────────────────────────────────────────────────────────
-
-function RetirementLayout({
-  form,
-  setForm,
-  analysis,
-  modelVersion,
-  isAnalyzing,
-  analysisError,
-  onAnalyze,
+function PhaseRail({
+  currentPhase,
+  step,
+  steps,
 }: {
-  form: RetirementFormState;
-  setForm: Dispatch<SetStateAction<RetirementFormState>>;
-  analysis: RetirementAnalysis | null;
-  modelVersion: string | null;
-  isAnalyzing: boolean;
-  analysisError: string | null;
-  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  currentPhase: ModulePhase;
+  step: number;
+  steps: string[];
 }) {
   return (
-    <div className="rent-layout">
-      <section className="panel">
-        <div className="panel__header">
-          <div>
-            <span className="panel__eyebrow">Inputs</span>
-            <h3>Retirement plan</h3>
-          </div>
-          <p>Portfolio, spending, guaranteed income, horizon, and market behavior. Nothing else.</p>
-        </div>
-
-        <form className="form-grid" onSubmit={onAnalyze}>
-          <p className="form-section-label">Portfolio</p>
-          <NumField label="Current portfolio" name="currentPortfolio" value={form.currentPortfolio} onChange={setForm} suffix="USD" />
-          <div className="form-two-col">
-            <NumField label="Annual spending" name="annualSpending" value={form.annualSpending} onChange={setForm} suffix="USD" />
-            <NumField label="Guaranteed income" name="annualGuaranteedIncome" value={form.annualGuaranteedIncome} onChange={setForm} suffix="USD" />
-          </div>
-
-          <p className="form-section-label">Return assumptions</p>
-          <div className="form-two-col">
-            <NumField label="Retirement years" name="retirementYears" value={form.retirementYears} onChange={setForm} suffix="yrs" />
-            <NumField label="Expected return" name="expectedAnnualReturn" value={form.expectedAnnualReturn} onChange={setForm} suffix="%/yr" step={0.1} />
-          </div>
-          <div className="form-two-col">
-            <SelectField
-              label="Risk tolerance"
-              value={form.riskProfile}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  riskProfile: value as RetirementFormState["riskProfile"],
-                }))
-              }
-              options={[
-                { value: "conservative", label: "Conservative" },
-                { value: "moderate", label: "Moderate" },
-                { value: "aggressive", label: "Aggressive" },
-              ]}
-            />
-            <SelectField
-              label="If markets crash"
-              value={form.lossBehavior}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  lossBehavior: value as RetirementFormState["lossBehavior"],
-                }))
-              }
-              options={[
-                { value: "hold", label: "Hold steady" },
-                { value: "sell_to_cash", label: "Sell to cash" },
-                { value: "buy_more", label: "Buy more" },
-              ]}
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
-              {isAnalyzing ? "Running survival simulation…" : "Run analysis"}
-            </button>
-          </div>
-          {analysisError && <p className="message message--error">{analysisError}</p>}
-        </form>
-      </section>
-
-      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
-        {analysis === null ? (
-          <EmptyOutput loading={isAnalyzing} />
-        ) : (
-          <RetirementOutputPanel analysis={analysis} modelVersion={modelVersion} />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function RetirementOutputPanel({
-  analysis,
-  modelVersion,
-}: {
-  analysis: RetirementAnalysis;
-  modelVersion: string | null;
-}) {
-  const det = analysis.deterministic;
-  const mc = analysis.monte_carlo;
-  const sustainable = mc.probability_portfolio_survives >= 0.8;
-
-  return (
-    <div>
-      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
-        <div>
-          <span className="panel__eyebrow">Output</span>
-          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
-            Retirement survival
-          </h3>
-        </div>
-        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
+    <div className="phase-rail">
+      <div className={`phase-chip${currentPhase === "input" ? " phase-chip--active" : " phase-chip--complete"}`}>
+        1. Input
       </div>
-
-      <div
-        className="verdict-card"
-        style={{
-          background: sustainable ? "rgba(36, 71, 55, 0.06)" : "rgba(140, 47, 61, 0.06)",
-          border: sustainable ? "1px solid rgba(36, 71, 55, 0.18)" : "1px solid rgba(140, 47, 61, 0.18)",
-        }}
-      >
-        <p className="verdict-card__eyebrow" style={{ color: sustainable ? "var(--accent)" : "var(--danger)" }}>
-          {sustainable ? "Plan is holding up" : "Plan is under strain"}
-        </p>
-        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
-          Portfolio survives in {formatPercent(mc.probability_portfolio_survives)} of simulated retirement paths.
-        </p>
-        <p className="verdict-card__sub">
-          Current withdrawal rate is {(det.current_withdrawal_rate * 100).toFixed(2)}%. The modeled 95% safe rate is {(mc.safe_withdrawal_rate_95 * 100).toFixed(2)}%.
-        </p>
-      </div>
-
-      <div className="summary-grid output-section">
-        <div className="summary-card">
-          <span>Median ending wealth</span>
-          <strong>{formatCurrency(mc.median_terminal_wealth_cents)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Downside ending wealth</span>
-          <strong style={{ color: "var(--danger)" }}>{formatCurrency(mc.p10_terminal_wealth_cents)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Upside ending wealth</span>
-          <strong style={{ color: "var(--accent)" }}>{formatCurrency(mc.p90_terminal_wealth_cents)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Deterministic endpoint</span>
-          <strong>{formatCurrency(det.terminal_wealth_cents)}</strong>
-        </div>
-      </div>
-
-      <div className="detail-card output-section">
-        <h4>Portfolio path by year</h4>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Yr</th>
-                <th>Deterministic</th>
-                <th>Median</th>
-                <th>10th pct.</th>
-                <th>90th pct.</th>
-                <th>Deplete prob.</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mc.yearly_rows.map((row) => (
-                <RetirementProjectionTableRow key={row.year} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {analysis.warnings.length > 0 && (
-        <div className="notice output-section">
-          {analysis.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
-        </div>
+      <div className={`phase-chip${currentPhase === "result" ? " phase-chip--active" : ""}`}>2. Result</div>
+      <div className={`phase-chip${currentPhase === "result" ? " phase-chip--active" : ""}`}>3. Explore</div>
+      {currentPhase === "input" && steps.length > 0 && (
+        <span className="step-caption">
+          Step {step + 1} of {steps.length} · {steps[step]}
+        </span>
       )}
     </div>
   );
 }
 
-function RetirementProjectionTableRow({ row }: { row: RetirementYearProjectionRow }) {
-  return (
-    <tr>
-      <td>{row.year}</td>
-      <td>{formatCurrency(row.deterministic_portfolio_cents)}</td>
-      <td>{formatCurrency(row.median_portfolio_cents)}</td>
-      <td>{formatCurrency(row.p10_portfolio_cents)}</td>
-      <td>{formatCurrency(row.p90_portfolio_cents)}</td>
-      <td>{formatPercent(row.cumulative_depletion_probability)}</td>
-    </tr>
-  );
-}
-
-function CollegeVsRetirementLayout({
-  form,
-  setForm,
-  analysis,
-  modelVersion,
-  isAnalyzing,
-  analysisError,
-  onAnalyze,
-}: {
-  form: CollegeVsRetirementFormState;
-  setForm: Dispatch<SetStateAction<CollegeVsRetirementFormState>>;
-  analysis: CollegeVsRetirementAnalysis | null;
-  modelVersion: string | null;
-  isAnalyzing: boolean;
-  analysisError: string | null;
-  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-}) {
-  return (
-    <div className="rent-layout">
-      <section className="panel">
-        <div className="panel__header">
-          <div>
-            <span className="panel__eyebrow">Inputs</span>
-            <h3>Family savings tradeoff</h3>
-          </div>
-          <p>One choice only: send the marginal savings budget toward college now, or keep it compounding for retirement.</p>
-        </div>
-
-        <form className="form-grid" onSubmit={onAnalyze}>
-          <p className="form-section-label">Balances</p>
-          <div className="form-two-col">
-            <NumField label="Retirement savings" name="currentRetirementSavings" value={form.currentRetirementSavings} onChange={setForm} suffix="USD" />
-            <NumField label="College savings" name="currentCollegeSavings" value={form.currentCollegeSavings} onChange={setForm} suffix="USD" />
-          </div>
-
-          <p className="form-section-label">Family timeline</p>
-          <div className="form-two-col">
-            <NumField label="Annual savings budget" name="annualSavingsBudget" value={form.annualSavingsBudget} onChange={setForm} suffix="USD" />
-            <NumField label="Annual college cost today" name="annualCollegeCost" value={form.annualCollegeCost} onChange={setForm} suffix="USD" />
-          </div>
-          <div className="form-two-col">
-            <NumField label="Years until college" name="yearsUntilCollege" value={form.yearsUntilCollege} onChange={setForm} suffix="yrs" />
-            <NumField label="Years in college" name="yearsInCollege" value={form.yearsInCollege} onChange={setForm} suffix="yrs" />
-          </div>
-          <div className="form-two-col">
-            <NumField label="Years until retirement" name="retirementYears" value={form.retirementYears} onChange={setForm} suffix="yrs" />
-            <NumField label="Expected return" name="expectedAnnualReturn" value={form.expectedAnnualReturn} onChange={setForm} suffix="%/yr" step={0.1} />
-          </div>
-          <div className="form-two-col">
-            <SelectField
-              label="Risk tolerance"
-              value={form.riskProfile}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  riskProfile: value as CollegeVsRetirementFormState["riskProfile"],
-                }))
-              }
-              options={[
-                { value: "conservative", label: "Conservative" },
-                { value: "moderate", label: "Moderate" },
-                { value: "aggressive", label: "Aggressive" },
-              ]}
-            />
-            <SelectField
-              label="If markets crash"
-              value={form.lossBehavior}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  lossBehavior: value as CollegeVsRetirementFormState["lossBehavior"],
-                }))
-              }
-              options={[
-                { value: "hold", label: "Hold steady" },
-                { value: "sell_to_cash", label: "Sell to cash" },
-                { value: "buy_more", label: "Buy more" },
-              ]}
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
-              {isAnalyzing ? "Running family-finance simulation…" : "Run analysis"}
-            </button>
-          </div>
-          {analysisError && <p className="message message--error">{analysisError}</p>}
-        </form>
-      </section>
-
-      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
-        {analysis === null ? (
-          <EmptyOutput loading={isAnalyzing} />
-        ) : (
-          <CollegeVsRetirementOutputPanel analysis={analysis} modelVersion={modelVersion} />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function CollegeVsRetirementOutputPanel({
-  analysis,
-  modelVersion,
-}: {
-  analysis: CollegeVsRetirementAnalysis;
-  modelVersion: string | null;
-}) {
-  const det = analysis.deterministic;
-  const mc = analysis.monte_carlo;
-  const retirementFirstWins = mc.probability_retirement_first_wins >= 0.55;
-  const collegeFirstWins = mc.probability_retirement_first_wins <= 0.45;
-  const verdictLabel = retirementFirstWins
-    ? "Retirement-first is stronger"
-    : collegeFirstWins
-      ? "College-first is stronger"
-      : "This is a close call";
-  const headline = retirementFirstWins
-    ? `Retirement-first wins ${formatPercent(mc.probability_retirement_first_wins)} of simulated paths.`
-    : collegeFirstWins
-      ? `College-first wins ${formatPercent(1 - mc.probability_retirement_first_wins)} of simulated paths.`
-      : `Neither strategy separates cleanly across the simulated paths.`;
-
-  return (
-    <div>
-      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
-        <div>
-          <span className="panel__eyebrow">Output</span>
-          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
-            College vs retirement
-          </h3>
-        </div>
-        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
-      </div>
-
-      <div
-        className="verdict-card"
-        style={{
-          background: retirementFirstWins ? "rgba(36, 71, 55, 0.06)" : collegeFirstWins ? "rgba(140, 47, 61, 0.06)" : "var(--surface-soft)",
-          border: retirementFirstWins ? "1px solid rgba(36, 71, 55, 0.18)" : collegeFirstWins ? "1px solid rgba(140, 47, 61, 0.18)" : "1px solid rgba(23, 34, 29, 0.12)",
-        }}
-      >
-        <p className="verdict-card__eyebrow" style={{ color: retirementFirstWins ? "var(--accent)" : collegeFirstWins ? "var(--danger)" : "var(--muted)" }}>
-          {verdictLabel}
-        </p>
-        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
-          {headline}
-        </p>
-        <p className="verdict-card__sub">
-          {det.break_even_year !== null
-            ? `Retirement-first overtakes college-first by year ${det.break_even_year}.`
-            : "Retirement-first never overtakes college-first inside the selected horizon."}
-          {mc.conditional_median_break_even_year !== null
-            ? ` Across winning simulations, median break-even is year ${mc.conditional_median_break_even_year}.`
-            : ""}
-        </p>
-      </div>
-
-      <div className="summary-grid output-section">
-        <div className="summary-card">
-          <span>Retirement-first wins</span>
-          <strong>{formatPercent(mc.probability_retirement_first_wins)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Median advantage</span>
-          <strong style={{ color: mc.median_terminal_advantage_cents >= 0 ? "var(--accent)" : "var(--danger)" }}>
-            {formatCurrency(mc.median_terminal_advantage_cents)}
-          </strong>
-        </div>
-        <div className="summary-card">
-          <span>Median retirement-first nest egg</span>
-          <strong>{formatCurrency(mc.median_retirement_first_terminal_retirement_cents)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Median college-first nest egg</span>
-          <strong>{formatCurrency(mc.median_college_first_terminal_retirement_cents)}</strong>
-        </div>
-      </div>
-
-      <div className="detail-card output-section">
-        <h4>Loan pressure and end-state retirement capital</h4>
-        <div className="result-row">
-          <span style={{ color: "var(--muted)" }}>College-first max loan need</span>
-          <span>{formatCurrency(det.college_first_total_loan_cents)}</span>
-        </div>
-        <div className="result-row">
-          <span style={{ color: "var(--muted)" }}>Retirement-first max loan need</span>
-          <span>{formatCurrency(det.retirement_first_total_loan_cents)}</span>
-        </div>
-        <div className="result-row">
-          <span style={{ color: "var(--muted)" }}>College-first retirement balance at horizon</span>
-          <span>{formatCurrency(det.college_first_terminal_retirement_cents)}</span>
-        </div>
-        <div className="result-row result-row--total">
-          <span>Retirement-first retirement balance at horizon</span>
-          <span>{formatCurrency(det.retirement_first_terminal_retirement_cents)}</span>
-        </div>
-      </div>
-
-      <div className="detail-card output-section">
-        <h4>Household net worth by year</h4>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Yr</th>
-                <th>College-first</th>
-                <th>Retirement-first</th>
-                <th>Difference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {det.yearly_rows.map((row) => (
-                <CollegeVsRetirementYearRow key={row.year} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {analysis.warnings.length > 0 && (
-        <div className="notice output-section">
-          {analysis.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CollegeVsRetirementYearRow({
-  row,
-}: {
-  row: CollegeVsRetirementYearComparisonRow;
-}) {
-  return (
-    <tr>
-      <td>{row.year}</td>
-      <td>{formatCurrency(row.college_first_net_worth_cents)}</td>
-      <td>{formatCurrency(row.retirement_first_net_worth_cents)}</td>
-      <td style={{ color: row.retirement_first_minus_college_first_cents >= 0 ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>
-        {formatCurrency(row.retirement_first_minus_college_first_cents)}
-      </td>
-    </tr>
-  );
-}
-
-function JobOfferLayout({
-  form,
-  setForm,
-  analysis,
-  modelVersion,
-  isAnalyzing,
-  analysisError,
-  onAnalyze,
-}: {
-  form: JobOfferFormState;
-  setForm: Dispatch<SetStateAction<JobOfferFormState>>;
-  analysis: JobOfferAnalysis | null;
-  modelVersion: string | null;
-  isAnalyzing: boolean;
-  analysisError: string | null;
-  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-}) {
-  const updateSide = (side: "offerA" | "offerB", field: keyof JobOfferFormSideState, value: string) => {
-    setForm((current) => ({
-      ...current,
-      [side]: {
-        ...current[side],
-        [field]: value,
-      },
-    }));
-  };
-
-  return (
-    <div className="rent-layout">
-      <section className="panel">
-        <div className="panel__header">
-          <div>
-            <span className="panel__eyebrow">Inputs</span>
-            <h3>Offer comparison</h3>
-          </div>
-          <p>Two offers, one horizon, one tax rate, and the real friction of moving.</p>
-        </div>
-
-        <form className="form-grid" onSubmit={onAnalyze}>
-          <p className="form-section-label">Comparison frame</p>
-          <div className="form-two-col">
-            <JobOfferNumberField
-              label="Decision horizon"
-              value={form.comparisonYears}
-              onChange={(value) => setForm((current) => ({ ...current, comparisonYears: value }))}
-              suffix="yrs"
-            />
-            <JobOfferNumberField
-              label="Marginal tax rate"
-              value={form.marginalTaxRate}
-              onChange={(value) => setForm((current) => ({ ...current, marginalTaxRate: value }))}
-              suffix="%"
-              step={1}
-            />
-          </div>
-          <SelectField
-            label="Human-capital concentration"
-            value={form.localMarketConcentration ? "yes" : "no"}
-            onChange={(value) =>
-              setForm((current) => ({
-                ...current,
-                localMarketConcentration: value === "yes",
-              }))
-            }
-            options={[
-              { value: "no", label: "No — labor market is diversified" },
-              { value: "yes", label: "Yes — income is tied to one company/market" },
-            ]}
-          />
-
-          <div className="form-two-col" style={{ alignItems: "start" }}>
-            <JobOfferSideFields
-              title="Offer A"
-              value={form.offerA}
-              onChange={(field, value) => updateSide("offerA", field, value)}
-            />
-            <JobOfferSideFields
-              title="Offer B"
-              value={form.offerB}
-              onChange={(field, value) => updateSide("offerB", field, value)}
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
-              {isAnalyzing ? "Running offer simulation…" : "Run analysis"}
-            </button>
-          </div>
-          {analysisError && <p className="message message--error">{analysisError}</p>}
-        </form>
-      </section>
-
-      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
-        {analysis === null ? (
-          <EmptyOutput loading={isAnalyzing} />
-        ) : (
-          <JobOfferOutputPanel
-            analysis={analysis}
-            modelVersion={modelVersion}
-            offerALabel={form.offerA.label}
-            offerBLabel={form.offerB.label}
-          />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function JobOfferSideFields({
+function ResultPage({
   title,
-  value,
-  onChange,
+  onEdit,
+  onOpenAudit,
+  disclaimer,
+  actions,
+  children,
 }: {
   title: string;
-  value: JobOfferFormSideState;
-  onChange: (field: keyof JobOfferFormSideState, value: string) => void;
+  onEdit: () => void;
+  onOpenAudit: () => void;
+  disclaimer: string;
+  actions: ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <div className="assumption-card">
-      <div className="assumption-card__header">
+    <div className="result-page">
+      <div className="result-page__header">
         <div>
-          <strong>{title}</strong>
-          <p>Cash comp, equity, and the cost of actually taking the job.</p>
+          <span className="section-kicker">Decision result</span>
+          <h2>{title}</h2>
         </div>
-      </div>
-      <div className="form-grid">
-        <JobOfferTextField label="Label" value={value.label} onChange={(next) => onChange("label", next)} />
-        <JobOfferNumberField label="Base salary" value={value.baseSalary} onChange={(next) => onChange("baseSalary", next)} suffix="USD" />
-        <JobOfferNumberField label="Annual bonus" value={value.targetBonus} onChange={(next) => onChange("targetBonus", next)} suffix="USD" />
-        <JobOfferNumberField label="Annual equity vesting" value={value.annualEquityVesting} onChange={(next) => onChange("annualEquityVesting", next)} suffix="USD" />
-        <div className="form-two-col">
-          <JobOfferNumberField label="Sign-on" value={value.signOnBonus} onChange={(next) => onChange("signOnBonus", next)} suffix="USD" />
-          <JobOfferNumberField label="Relocation cost" value={value.relocationCost} onChange={(next) => onChange("relocationCost", next)} suffix="USD" />
-        </div>
-        <div className="form-two-col">
-          <JobOfferNumberField label="Extra annual living cost" value={value.annualCostOfLivingDelta} onChange={(next) => onChange("annualCostOfLivingDelta", next)} suffix="USD" />
-          <JobOfferNumberField label="Annual commute cost" value={value.annualCommuteCost} onChange={(next) => onChange("annualCommuteCost", next)} suffix="USD" />
-        </div>
-        <div className="form-two-col">
-          <JobOfferNumberField label="Comp growth" value={value.annualCompGrowthRate} onChange={(next) => onChange("annualCompGrowthRate", next)} suffix="%/yr" step={0.1} />
-          <JobOfferNumberField label="Equity growth" value={value.annualEquityGrowthRate} onChange={(next) => onChange("annualEquityGrowthRate", next)} suffix="%/yr" step={0.1} />
-        </div>
-        <div className="form-two-col">
-          <JobOfferNumberField label="Bonus volatility" value={value.bonusPayoutVolatility} onChange={(next) => onChange("bonusPayoutVolatility", next)} suffix="%" step={1} />
-          <JobOfferNumberField label="Equity volatility" value={value.equityVolatility} onChange={(next) => onChange("equityVolatility", next)} suffix="%" step={1} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function JobOfferOutputPanel({
-  analysis,
-  modelVersion,
-  offerALabel,
-  offerBLabel,
-}: {
-  analysis: JobOfferAnalysis;
-  modelVersion: string | null;
-  offerALabel: string;
-  offerBLabel: string;
-}) {
-  const det = analysis.deterministic;
-  const mc = analysis.monte_carlo;
-  const probability = mc.probability_offer_b_wins;
-  const offerBWins = probability >= 0.55;
-  const offerAWins = probability <= 0.45;
-  const verdictLabel = offerBWins
-    ? `${offerBLabel} is stronger`
-    : offerAWins
-      ? `${offerALabel} is stronger`
-      : "This is a close call";
-  const verdictHeadline = offerBWins
-    ? `${offerBLabel} beats ${offerALabel} in ${formatPercent(probability)} of simulated compensation paths.`
-    : offerAWins
-      ? `${offerALabel} beats ${offerBLabel} in ${formatPercent(1 - probability)} of simulated compensation paths.`
-      : `${offerBLabel} wins ${formatPercent(probability)} of paths, which is not enough separation to treat as decisive.`;
-
-  return (
-    <div>
-      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
-        <div>
-          <span className="panel__eyebrow">Output</span>
-          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
-            Job offer comparison
-          </h3>
-        </div>
-        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
-      </div>
-
-      <div
-        className="verdict-card"
-        style={{
-          background: offerBWins ? "rgba(36, 71, 55, 0.06)" : offerAWins ? "rgba(140, 47, 61, 0.06)" : "var(--surface-soft)",
-          border: offerBWins ? "1px solid rgba(36, 71, 55, 0.18)" : offerAWins ? "1px solid rgba(140, 47, 61, 0.18)" : "1px solid rgba(23, 34, 29, 0.12)",
-        }}
-      >
-        <p className="verdict-card__eyebrow" style={{ color: offerBWins ? "var(--accent)" : offerAWins ? "var(--danger)" : "var(--muted)" }}>
-          {verdictLabel}
-        </p>
-        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
-          {verdictHeadline}
-        </p>
-        <p className="verdict-card__sub">
-          {det.break_even_month !== null
-            ? `${offerBLabel} recovers its upfront friction by month ${det.break_even_month}.`
-            : `${offerBLabel} does not recover its upfront friction inside the selected horizon.`}
-          {mc.conditional_median_break_even_month !== null
-            ? ` Across simulations, median break-even is month ${mc.conditional_median_break_even_month}.`
-            : ""}
-        </p>
-      </div>
-
-      <div className="summary-grid output-section">
-        <div className="summary-card">
-          <span>{offerBLabel} wins</span>
-          <strong>{formatPercent(probability)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Median advantage</span>
-          <strong style={{ color: mc.median_terminal_advantage_cents >= 0 ? "var(--accent)" : "var(--danger)" }}>
-            {formatCurrency(mc.median_terminal_advantage_cents)}
-          </strong>
-        </div>
-        <div className="summary-card">
-          <span>Downside</span>
-          <strong style={{ color: "var(--danger)" }}>{formatCurrency(mc.p10_terminal_advantage_cents)}</strong>
-        </div>
-        <div className="summary-card">
-          <span>Upside</span>
-          <strong style={{ color: "var(--accent)" }}>{formatCurrency(mc.p90_terminal_advantage_cents)}</strong>
-        </div>
-      </div>
-
-      <div className="detail-card output-section">
-        <h4>Cumulative after-tax value by year</h4>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Yr</th>
-                <th>{offerALabel}</th>
-                <th>{offerBLabel}</th>
-                <th>Difference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {det.yearly_rows.map((row) => (
-                <JobOfferYearRow key={row.year} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {analysis.warnings.length > 0 && (
-        <div className="notice output-section">
-          {analysis.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function JobOfferYearRow({ row }: { row: JobOfferYearComparisonRow }) {
-  return (
-    <tr>
-      <td>{row.year}</td>
-      <td>{formatCurrency(row.offer_a_cumulative_value_cents)}</td>
-      <td>{formatCurrency(row.offer_b_cumulative_value_cents)}</td>
-      <td style={{ color: row.offer_b_minus_offer_a_cents >= 0 ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>
-        {formatCurrency(row.offer_b_minus_offer_a_cents)}
-      </td>
-    </tr>
-  );
-}
-
-function JobOfferNumberField({
-  label,
-  value,
-  onChange,
-  suffix,
-  step,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  suffix?: string;
-  step?: number;
-}) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <div className="field__input">
-        <input type="number" step={step ?? "any"} value={value} onChange={(event) => onChange(event.target.value)} />
-        {suffix && <small>{suffix}</small>}
-      </div>
-    </label>
-  );
-}
-
-function JobOfferTextField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <div className="field__input">
-        <input type="text" value={value} onChange={(event) => onChange(event.target.value)} />
-      </div>
-    </label>
-  );
-}
-
-function EmptyOutput({ loading }: { loading: boolean }) {
-  return (
-    <div style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>
-      <div>
-        <span className="panel__eyebrow">Output</span>
-        <h3 style={{
-          fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif",
-          fontSize: "1.8rem",
-          margin: "0.35rem 0 0.75rem",
-          color: "var(--ink)",
-        }}>
-          {loading ? "Running the model…" : "Run the model to see the result."}
-        </h3>
-        <p style={{ color: "var(--muted)", maxWidth: "26rem", margin: "0 auto" }}>
-          {loading
-            ? "Simulating 10,000 correlated economic futures. This takes a moment."
-            : "Fill in the inputs on the left and press Run analysis. The output stays quiet until there is a real result to display."}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function OutputPanel({
-  activeAnalysis,
-  activeModelVersion,
-  costBreakdown,
-  yearlyRows,
-  isGeneratingReport,
-  onDownloadReport,
-}: {
-  activeAnalysis: NonNullable<AnalysisEnvelope["analysis"]>;
-  activeModelVersion: string | null;
-  costBreakdown: NonNullable<AnalysisEnvelope["analysis"]>["deterministic"]["first_year_cost_breakdown"] | null;
-  yearlyRows: YearlyComparisonRow[];
-  isGeneratingReport: boolean;
-  onDownloadReport: () => void;
-}) {
-  const mc = activeAnalysis.monte_carlo;
-  const det = activeAnalysis.deterministic;
-  const prob = mc.probability_buy_beats_rent;
-  const v = verdictConfig(prob);
-
-  // Deterministic break-even
-  const beMonth = det.break_even_month;
-  const beYears = beMonth != null ? (beMonth / 12).toFixed(1) : null;
-  const horizonYears = (det.horizon_months / 12).toFixed(0);
-
-  // Year-one monthly costs (breakdown sums cover min(12, horizon) months)
-  const firstYear = Math.min(12, det.horizon_months);
-  const cbMonthly = costBreakdown
-    ? {
-        pi: Math.round(costBreakdown.principal_and_interest_cents / firstYear),
-        tax: Math.round(costBreakdown.property_tax_cents / firstYear),
-        ins: Math.round(costBreakdown.insurance_cents / firstYear),
-        maint: Math.round(costBreakdown.maintenance_cents / firstYear),
-        pmi: Math.round(costBreakdown.pmi_cents / firstYear),
-        liq: Math.round(costBreakdown.liquidity_premium_cents / firstYear),
-      }
-    : null;
-  const monthlyTotal = cbMonthly
-    ? cbMonthly.pi + cbMonthly.tax + cbMonthly.ins + cbMonthly.maint + cbMonthly.pmi + cbMonthly.liq
-    : 0;
-
-  return (
-    <div>
-      {/* header */}
-      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
-        <div>
-          <span className="panel__eyebrow">Output</span>
-          <h3 style={{
-            fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif",
-            fontSize: "1.8rem",
-            marginTop: "0.35rem",
-          }}>
-            The verdict
-          </h3>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.4rem" }}>
-          {activeModelVersion && (
-            <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{activeModelVersion}</span>
-          )}
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={onDownloadReport}
-            disabled={isGeneratingReport}
-            style={{ fontSize: "0.82rem", minHeight: "2.25rem", padding: "0 0.85rem" }}
-          >
-            {isGeneratingReport ? "Building PDF…" : "Download report"}
+        <div className="result-page__header-actions">
+          <button type="button" className="button button--secondary" onClick={onEdit}>
+            Edit inputs
+          </button>
+          <button type="button" className="button button--secondary" onClick={onOpenAudit}>
+            Where these numbers come from
           </button>
         </div>
       </div>
-
-      {/* ── VERDICT CARD ── */}
-      <div
-        className="verdict-card"
-        style={{ background: v.bg, border: `1px solid ${v.border}` }}
-      >
-        <p className="verdict-card__eyebrow" style={{ color: v.color }}>{v.label}</p>
-        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
-          {v.headline}
-        </p>
-        <p className="verdict-card__sub">
-          {beMonth != null
-            ? `Break-even at month ${beMonth} (year ${beYears} of your ${horizonYears}-year plan).`
-            : `No break-even within your ${horizonYears}-year horizon.`}
-          {mc.break_even_ci_80[0] != null && mc.break_even_ci_80[1] != null
-            ? ` 80% of scenarios break even between month ${mc.break_even_ci_80[0]} and ${mc.break_even_ci_80[1]}.`
-            : ""}
-        </p>
-      </div>
-
-      {/* ── KEY NUMBERS ── */}
-      <div className="summary-grid output-section">
-        <div className="summary-card">
-          <span>Buying wins</span>
-          <strong style={{ color: v.color }}>{formatPercent(prob)}</strong>
-          <div className="prob-bar">
-            <div
-              className="prob-bar__fill"
-              style={{
-                width: formatPercent(prob),
-                background: v.color,
-              }}
-            />
-          </div>
-        </div>
-        <div className="summary-card">
-          <span>Median outcome</span>
-          <strong style={{
-            color: mc.median_terminal_advantage_cents >= 0 ? "var(--accent)" : "var(--danger)",
-          }}>
-            {formatCurrency(mc.median_terminal_advantage_cents)}
-          </strong>
-        </div>
-        <div className="summary-card">
-          <span>Downside (10th pct.)</span>
-          <strong style={{ color: "var(--danger)" }}>
-            {formatCurrency(mc.p10_terminal_advantage_cents)}
-          </strong>
-        </div>
-        <div className="summary-card">
-          <span>Upside (90th pct.)</span>
-          <strong style={{ color: "var(--accent)" }}>
-            {formatCurrency(mc.p90_terminal_advantage_cents)}
-          </strong>
-        </div>
-      </div>
-
-      {/* ── YEAR-ONE COSTS ── */}
-      {cbMonthly && (
-        <div className="detail-card output-section">
-          <h4>Year one — monthly cost of buying</h4>
-          {([
-            ["Mortgage (P+I)", cbMonthly.pi],
-            ["Property tax", cbMonthly.tax],
-            ["Insurance", cbMonthly.ins],
-            ["Maintenance", cbMonthly.maint],
-            cbMonthly.pmi > 0 ? ["PMI", cbMonthly.pmi] : null,
-            ["Liquidity premium on equity", cbMonthly.liq],
-          ] as Array<[string, number] | null>)
-            .filter((row): row is [string, number] => row !== null)
-            .map(([label, val]) => (
-              <div key={label as string} className="result-row">
-                <span style={{ color: "var(--muted)" }}>{label}</span>
-                <span>{formatCurrency(val as number)}/mo</span>
-              </div>
-            ))}
-          <div className="result-row result-row--total">
-            <span>Total monthly housing cost</span>
-            <span>{formatCurrency(monthlyTotal)}/mo</span>
-          </div>
-          {costBreakdown && costBreakdown.total_mortgage_interest_deduction_cents > 0 && (
-            <div className="result-row result-row--credit" style={{ border: 0, paddingTop: "0.4rem" }}>
-              <span>Interest deduction — full horizon est.</span>
-              <span>−{formatCurrency(costBreakdown.total_mortgage_interest_deduction_cents)}</span>
-            </div>
-          )}
-          {costBreakdown && costBreakdown.closing_costs_cents > 0 && (
-            <div className="result-row" style={{ border: 0 }}>
-              <span style={{ color: "var(--muted)" }}>Buyer closing costs (one-time upfront)</span>
-              <span>{formatCurrency(costBreakdown.closing_costs_cents)}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── YEARLY NET WORTH TABLE ── */}
-      {yearlyRows.length > 0 && (
-        <div className="table-card output-section">
-          <div className="table-card__header">
-            <h4>Net worth by year — rent vs buy</h4>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Yr</th>
-                  <th>Renting</th>
-                  <th>Buying</th>
-                  <th>Difference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {yearlyRows.map((row) => (
-                  <YearRow key={row.year} row={row} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── BEHAVIORAL ADJUSTMENT ── */}
-      {mc.utility_adjusted_p50_advantage_cents !== mc.median_terminal_advantage_cents && (
-        <div className="detail-card output-section">
-          <h4>Loss-aversion adjustment (λ = 2.25)</h4>
-          <div className="result-row">
-            <span style={{ color: "var(--muted)" }}>Raw median outcome</span>
-            <span>{formatCurrency(mc.median_terminal_advantage_cents)}</span>
-          </div>
-          <div className="result-row">
-            <span style={{ color: "var(--muted)" }}>Behaviorally adjusted median</span>
-            <span style={{
-              color: mc.utility_adjusted_p50_advantage_cents < mc.median_terminal_advantage_cents
-                ? "var(--danger)"
-                : "var(--accent)",
-            }}>
-              {formatCurrency(mc.utility_adjusted_p50_advantage_cents)}
-            </span>
-          </div>
-          <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0.55rem 0 0" }}>
-            Losses are weighted 2.25× heavier than equivalent gains — as most households
-            actually experience them. The adjusted figure is typically lower than the raw median.
-          </p>
-        </div>
-      )}
-
-      {/* ── WARNINGS ── */}
-      {activeAnalysis.warnings.length > 0 && (
-        <div className="notice output-section">
-          {activeAnalysis.warnings.map((w) => (
-            <p key={w}>{w}</p>
-          ))}
-        </div>
-      )}
+      {children}
+      <footer className="disclaimer-footnote">{disclaimer}</footer>
+      {actions}
     </div>
   );
 }
 
-// ── small presentational components ──────────────────────────────────────────
-
-function YearRow({ row }: { row: YearlyComparisonRow }) {
-  const diff = row.buy_minus_rent_cents;
-  const buyAhead = diff > 0;
+function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
-    <tr>
-      <td>{row.year}</td>
-      <td>{formatCurrency(row.rent_net_worth_cents)}</td>
-      <td>{formatCurrency(row.buy_net_worth_cents)}</td>
-      <td style={{ color: buyAhead ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>
-        {buyAhead ? "+" : ""}
-        {formatCurrency(diff)}
-      </td>
-    </tr>
+    <div className="section-header">
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
   );
 }
 
-type NumericFieldName =
-  | keyof FormState
-  | keyof RetirementFormState
-  | keyof CollegeVsRetirementFormState;
+function VerdictCard({
+  eyebrow,
+  title,
+  supporting,
+}: {
+  eyebrow: string;
+  title: string;
+  supporting: string;
+}) {
+  return (
+    <section className="verdict-card">
+      <span className="section-kicker">{eyebrow}</span>
+      <h3>{title}</h3>
+      <p>{supporting}</p>
+    </section>
+  );
+}
 
-function NumField({
+function ProbabilityBar({
+  leftLabel,
+  rightLabel,
+  rightProbability,
+  leftDetail,
+  centerDetail,
+  rightDetail,
+}: {
+  leftLabel: string;
+  rightLabel: string;
+  rightProbability: number;
+  leftDetail: string;
+  centerDetail: string;
+  rightDetail: string;
+}) {
+  const leftProbability = Math.max(0, 1 - rightProbability);
+  return (
+    <section className="probability-card">
+      <div className="probability-card__labels">
+        <span>{leftLabel}</span>
+        <span>{rightLabel}</span>
+      </div>
+      <div className="probability-bar">
+        <div className="probability-bar__left" style={{ width: `${leftProbability * 100}%` }} />
+        <div className="probability-bar__right" style={{ width: `${rightProbability * 100}%` }} />
+      </div>
+      <div className="probability-card__numbers">
+        <strong>{formatPercent(leftProbability)}</strong>
+        <strong>{formatPercent(rightProbability)}</strong>
+      </div>
+      <div className="probability-card__details">
+        <div>
+          <span>P10 outcome</span>
+          <strong>{leftDetail}</strong>
+        </div>
+        <div>
+          <span>Middle outcome</span>
+          <strong>{centerDetail}</strong>
+        </div>
+        <div>
+          <span>P90 outcome</span>
+          <strong>{rightDetail}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function KeyNumberGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: string; caption: string }>;
+}) {
+  return (
+    <section className="key-grid">
+      {items.map((item) => (
+        <article key={item.label} className="key-card">
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+          <p>{item.caption}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function WarningList({ warnings }: { warnings: string[] }) {
+  return (
+    <section className="warning-stack">
+      {warnings.map((warning) => (
+        <article key={warning} className="warning-card">
+          <strong>Warning</strong>
+          <p>{warning}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function NarrativeStack({
+  title,
+  paragraphs,
+}: {
+  title: string;
+  paragraphs: string[];
+}) {
+  return (
+    <section className="narrative-block">
+      <h3>{title}</h3>
+      {paragraphs.map((paragraph) => (
+        <p key={paragraph}>{paragraph}</p>
+      ))}
+    </section>
+  );
+}
+
+function ChartCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="chart-card">
+      <div className="chart-card__header">
+        <h4>{title}</h4>
+        <p>{description}</p>
+      </div>
+      <div className="chart-scroll">{children}</div>
+    </section>
+  );
+}
+
+function DualLineChart({
+  rows,
+  series,
+  labels,
+  markerMonth,
+  markerLabel,
+}: {
+  rows: ReportYearRow[];
+  series: Array<{ label: string; color: string; values: number[] }>;
+  labels: string[];
+  markerMonth: number | null;
+  markerLabel: string;
+}) {
+  const width = 720;
+  const height = 320;
+  const allValues = series.flatMap((entry) => entry.values);
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const pointSets = series.map((entry) => normalizePoints(entry.values, width, height, min, max));
+  const markerX =
+    markerMonth === null || rows.length === 0
+      ? null
+      : Math.max(0, Math.min(width, ((markerMonth / 12 - 1) / Math.max(rows.length - 1, 1)) * width));
+
+  return (
+    <div className="chart-frame">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trend chart">
+        {pointSets.length >= 2 && (
+          <path d={buildBandPath(pointSets[0], pointSets[1])} fill="rgba(36, 71, 55, 0.08)" />
+        )}
+        {pointSets.map((points, index) => (
+          <path
+            key={series[index].label}
+            d={buildLinePath(points)}
+            fill="none"
+            stroke={series[index].color}
+            strokeWidth="4"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ))}
+        {markerX !== null && (
+          <>
+            <line x1={markerX} y1={0} x2={markerX} y2={height} stroke="rgba(23,34,29,0.3)" strokeDasharray="8 8" />
+            <text x={markerX + 8} y={18} fontSize="14" fill="#5f6f67">
+              {markerLabel}
+            </text>
+          </>
+        )}
+      </svg>
+      <div className="chart-axis">
+        <span>{formatCompactCurrency(min)}</span>
+        <span>{formatCompactCurrency(max)}</span>
+      </div>
+      <div className="chart-legend">
+        {series.map((entry) => (
+          <span key={entry.label}>
+            <i style={{ background: entry.color }} />
+            {entry.label}
+          </span>
+        ))}
+      </div>
+      <div className="chart-labels">
+        {labels.map((label) => (
+          <span key={label}>{label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SplitCard({
+  left,
+  right,
+}: {
+  left: ReactNode;
+  right: ReactNode;
+}) {
+  return <div className="split-grid">{left}{right}</div>;
+}
+
+function FanChart({
+  rows,
+}: {
+  rows: RetirementSurvivalReport["yearly_projection"];
+}) {
+  const width = 720;
+  const height = 320;
+  const allValues = rows.flatMap((row) => [
+    row.p10_portfolio_cents,
+    row.p90_portfolio_cents,
+    row.median_portfolio_cents,
+    row.deterministic_portfolio_cents,
+  ]);
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const p10 = normalizePoints(rows.map((row) => row.p10_portfolio_cents), width, height, min, max);
+  const p90 = normalizePoints(rows.map((row) => row.p90_portfolio_cents), width, height, min, max);
+  const median = normalizePoints(rows.map((row) => row.median_portfolio_cents), width, height, min, max);
+  const deterministic = normalizePoints(
+    rows.map((row) => row.deterministic_portfolio_cents),
+    width,
+    height,
+    min,
+    max,
+  );
+
+  return (
+    <div className="chart-frame">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Retirement fan chart">
+        <path d={buildBandPath(p10, p90)} fill="rgba(36, 71, 55, 0.12)" />
+        <path d={buildLinePath(median)} fill="none" stroke="var(--accent)" strokeWidth="4" />
+        <path d={buildLinePath(deterministic)} fill="none" stroke="var(--accent-soft-strong)" strokeWidth="3" />
+      </svg>
+      <div className="chart-axis">
+        <span>{formatCompactCurrency(min)}</span>
+        <span>{formatCompactCurrency(max)}</span>
+      </div>
+      <div className="chart-legend">
+        <span><i style={{ background: "var(--accent)" }} />Median</span>
+        <span><i style={{ background: "var(--accent-soft-strong)" }} />Deterministic</span>
+        <span><i style={{ background: "rgba(36, 71, 55, 0.12)" }} />P10–P90 band</span>
+      </div>
+      <div className="chart-labels">
+        {rows.map((row) => (
+          <span key={row.year}>Y{row.year}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InfoList({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ label: string; value: string; strong?: boolean }>;
+}) {
+  return (
+    <section className="info-card">
+      <h4>{title}</h4>
+      <div className="info-list">
+        {rows.map((row) => (
+          <div key={row.label} className="info-list__row">
+            <span>{row.label}</span>
+            <strong className={row.strong ? "strong" : ""}>{row.value}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ComparisonList({
+  title,
+  leftTitle,
+  rightTitle,
+  leftRows,
+  rightRows,
+}: {
+  title: string;
+  leftTitle: string;
+  rightTitle: string;
+  leftRows: ReportInputsSummaryRow[];
+  rightRows: ReportInputsSummaryRow[];
+}) {
+  return (
+    <section className="info-card">
+      <h4>{title}</h4>
+      <div className="compare-table">
+        <div className="compare-table__header" />
+        <div className="compare-table__header">{leftTitle}</div>
+        <div className="compare-table__header">{rightTitle}</div>
+        {leftRows.map((row, index) => (
+          <div key={row.label} className="compare-table__cells">
+            <span>{row.label}</span>
+            <strong>{row.value}</strong>
+            <strong>{rightRows[index]?.value ?? "—"}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TwoColumnOutcomeCard({
+  leftTitle,
+  rightTitle,
+  rows,
+}: {
+  leftTitle: string;
+  rightTitle: string;
+  rows: Array<{ label: string; leftValue: string; rightValue: string }>;
+}) {
+  return (
+    <section className="info-card">
+      <h4>Tradeoff at a glance</h4>
+      <div className="compare-table">
+        <div className="compare-table__header" />
+        <div className="compare-table__header">{leftTitle}</div>
+        <div className="compare-table__header">{rightTitle}</div>
+        {rows.map((row) => (
+          <div key={row.label} className="compare-table__cells">
+            <span>{row.label}</span>
+            <strong>{row.leftValue}</strong>
+            <strong>{row.rightValue}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SensitivitySection({
+  title,
+  description,
+  rows,
+}: {
+  title: string;
+  description: string;
+  rows: Array<{ label: string; primary: string; secondary: string; delta: string }>;
+}) {
+  return (
+    <section className="info-card">
+      <div className="chart-card__header">
+        <h4>{title}</h4>
+        <p>{description}</p>
+      </div>
+      <div className="sensitivity-list">
+        {rows.map((row) => (
+          <details key={row.label} className="sensitivity-item">
+            <summary>
+              <span>{row.label}</span>
+              <strong>{row.primary}</strong>
+            </summary>
+            <div className="sensitivity-item__body">
+              <span>Break-even: {row.secondary}</span>
+              <span>Change: {row.delta}</span>
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StickyActions({
+  onExplore,
+  onPrint,
+  onSave,
+  onDownloadPdf,
+  isSaving = false,
+  isGeneratingPdf = false,
+  saveLabel,
+}: {
+  onExplore: () => void;
+  onPrint: () => void;
+  onSave?: () => void;
+  onDownloadPdf?: () => void;
+  isSaving?: boolean;
+  isGeneratingPdf?: boolean;
+  saveLabel?: string | null;
+}) {
+  return (
+    <div className="sticky-actions">
+      <button type="button" className="button button--secondary" onClick={onExplore}>
+        See full analysis
+      </button>
+      <button type="button" className="button button--secondary" onClick={onPrint}>
+        Print / Save as PDF
+      </button>
+      {onSave && (
+        <button type="button" className="button button--secondary" onClick={onSave} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save analysis"}
+        </button>
+      )}
+      {onDownloadPdf && (
+        <button type="button" className="button button--primary" onClick={onDownloadPdf} disabled={isGeneratingPdf}>
+          {isGeneratingPdf ? "Building PDF..." : "Formal PDF"}
+        </button>
+      )}
+      {saveLabel && <span className="sticky-actions__note">{saveLabel}</span>}
+    </div>
+  );
+}
+
+function AuditSheet({
+  title,
+  rows,
+  open,
+  onClose,
+}: {
+  title: string;
+  rows: ReportAuditTrailRow[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+  return (
+    <div className="audit-sheet-backdrop" onClick={onClose}>
+      <div className="audit-sheet" onClick={(event) => event.stopPropagation()}>
+        <div className="audit-sheet__header">
+          <div>
+            <span className="section-kicker">Audit trail</span>
+            <h3>{title}</h3>
+          </div>
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="audit-sheet__body">
+          {rows.map((row) => (
+            <article key={`${row.label}-${row.source}`} className="audit-row">
+              <div className="audit-row__top">
+                <strong>{row.label}</strong>
+                <span>{row.value === null ? "—" : String(row.value)}</span>
+              </div>
+              <p>Source: {row.source} · Updated {formatDate(row.last_updated)}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FieldGroup({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="field-group">
+      <div className="field-group__header">
+        <h3>{title}</h3>
+        <p>{description}</p>
+      </div>
+      <div className="field-group__body">{children}</div>
+    </section>
+  );
+}
+
+function BaseField({
   label,
-  name,
-  value,
-  onChange,
-  suffix,
-  step,
+  hint,
+  children,
 }: {
   label: string;
-  name: NumericFieldName;
-  value: string;
-  onChange:
-    | Dispatch<SetStateAction<FormState>>
-    | Dispatch<SetStateAction<RetirementFormState>>
-    | Dispatch<SetStateAction<CollegeVsRetirementFormState>>;
-  suffix?: string;
-  step?: number;
+  hint?: string;
+  children: ReactNode;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <div className="field__input">
-        <input
-          type="number"
-          step={step ?? "any"}
-          value={value}
-          onChange={(e) =>
-            (onChange as unknown as Dispatch<SetStateAction<Record<string, unknown>>>)
-            ((current) => ({ ...current, [name]: e.target.value }))
-          }
-        />
+      {children}
+      {hint && <small>{hint}</small>}
+    </label>
+  );
+}
+
+function CurrencyField({
+  label,
+  value,
+  onChange,
+  suffix,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  suffix?: string;
+  hint?: string;
+}) {
+  return (
+    <BaseField label={label} hint={hint}>
+      <div className="input-shell">
+        <small>$</small>
+        <input type="number" inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} />
         {suffix && <small>{suffix}</small>}
       </div>
-    </label>
+    </BaseField>
+  );
+}
+
+function PercentField({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  hint?: string;
+}) {
+  return (
+    <BaseField label={label} hint={hint}>
+      <div className="input-shell">
+        <input type="number" inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} />
+        <small>%</small>
+      </div>
+    </BaseField>
   );
 }
 
@@ -2315,76 +2691,189 @@ function SelectField({
 }: {
   label: string;
   value: string;
-  onChange: (v: string) => void;
+  onChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <label className="field">
-      <span>{label}</span>
-      <div className="field__input">
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
+    <BaseField label={label}>
+      <div className="input-shell">
+        <select value={value} onChange={(event) => onChange(event.target.value)}>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
       </div>
-    </label>
+    </BaseField>
   );
 }
 
-function RangeField({
+function SegmentedField({
   label,
   value,
+  onChange,
+  options,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  hint?: string;
+}) {
+  return (
+    <BaseField label={label} hint={hint}>
+      <div className="segmented-field">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`segmented-field__option${option.value === value ? " segmented-field__option--active" : ""}`}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </BaseField>
+  );
+}
+
+function SliderField({
+  label,
+  value,
+  onChange,
   min,
   max,
   step,
+  display,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+}) {
+  return (
+    <BaseField label={label}>
+      <div className="slider-field">
+        <div className="slider-field__top">
+          <strong>{display}</strong>
+        </div>
+        <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(event.target.value)} />
+      </div>
+    </BaseField>
+  );
+}
+
+function PresetField({
+  label,
+  value,
   onChange,
-  prefix,
+  presets,
   suffix,
 }: {
   label: string;
   value: string;
-  min: number;
-  max: number;
-  step: number;
   onChange: (value: string) => void;
-  prefix?: string;
+  presets: Array<{ label: string; value: string }>;
   suffix?: string;
 }) {
   return (
-    <label className="range-field">
-      <div className="range-field__row">
-        <span>{label}</span>
-        <strong>
-          {prefix ?? ""}
-          {value}
-          {suffix ?? ""}
-        </strong>
+    <BaseField label={label}>
+      <div className="preset-row">
+        {presets.map((preset) => (
+          <button
+            key={preset.value}
+            type="button"
+            className={`preset-chip${preset.value === value ? " preset-chip--active" : ""}`}
+            onClick={() => onChange(preset.value)}
+          >
+            {preset.label}
+          </button>
+        ))}
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <div className="range-field__meta">
-        <small>
-          {prefix ?? ""}
-          {min}
-          {suffix ?? ""}
-        </small>
-        <small>
-          {prefix ?? ""}
-          {max}
-          {suffix ?? ""}
-        </small>
+      <div className="input-shell">
+        <input type="number" inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} />
+        {suffix && <small>{suffix}</small>}
       </div>
-    </label>
+    </BaseField>
   );
 }
 
-export default App;
+function OfferFields({
+  title,
+  form,
+  onChange,
+}: {
+  title: string;
+  form: JobOfferFormSideState;
+  onChange: (next: JobOfferFormSideState) => void;
+}) {
+  return (
+    <FieldGroup title={title} description="Keep the numbers concrete. The model will handle the uncertainty later.">
+      <BaseField label="Role label">
+        <div className="input-shell">
+          <input type="text" value={form.label} onChange={(event) => onChange({ ...form, label: event.target.value })} />
+        </div>
+      </BaseField>
+      <CurrencyField label="Base salary" value={form.baseSalary} onChange={(value) => onChange({ ...form, baseSalary: value })} />
+      <CurrencyField label="Target bonus" value={form.targetBonus} onChange={(value) => onChange({ ...form, targetBonus: value })} />
+      <CurrencyField label="Annual equity vesting" value={form.annualEquityVesting} onChange={(value) => onChange({ ...form, annualEquityVesting: value })} />
+      <CurrencyField label="Sign-on bonus" value={form.signOnBonus} onChange={(value) => onChange({ ...form, signOnBonus: value })} />
+      <CurrencyField label="Relocation cost" value={form.relocationCost} onChange={(value) => onChange({ ...form, relocationCost: value })} />
+      <CurrencyField
+        label="Annual cost-of-living delta"
+        value={form.annualCostOfLivingDelta}
+        onChange={(value) => onChange({ ...form, annualCostOfLivingDelta: value })}
+        hint="Use a negative number if the new city is cheaper."
+      />
+      <CurrencyField label="Annual commute cost" value={form.annualCommuteCost} onChange={(value) => onChange({ ...form, annualCommuteCost: value })} />
+      <PercentField label="Annual compensation growth" value={form.annualCompGrowthRate} onChange={(value) => onChange({ ...form, annualCompGrowthRate: value })} />
+    </FieldGroup>
+  );
+}
+
+function WizardActions({
+  canGoBack,
+  onBack,
+  onNext,
+  submitLabel,
+  isSubmitting,
+}: {
+  canGoBack: boolean;
+  onBack: () => void;
+  onNext?: () => void;
+  submitLabel: string;
+  isSubmitting: boolean;
+}) {
+  return (
+    <div className="wizard-actions">
+      <button type="button" className="button button--secondary" onClick={onBack} disabled={!canGoBack}>
+        Back
+      </button>
+      {onNext ? (
+        <button type="button" className="button button--primary" onClick={onNext}>
+          Next
+        </button>
+      ) : (
+        <button type="submit" className="button button--primary" disabled={isSubmitting}>
+          {isSubmitting ? "Running..." : submitLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function InlineNotice({
+  tone,
+  children,
+}: {
+  tone: "warning" | "muted";
+  children: ReactNode;
+}) {
+  return <div className={`inline-notice inline-notice--${tone}`}>{children}</div>;
+}

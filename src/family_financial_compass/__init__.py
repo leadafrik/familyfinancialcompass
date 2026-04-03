@@ -27,7 +27,12 @@ from .models import (
     SystemAssumptions,
     UserScenarioInput,
 )
-from .reporting import build_rent_vs_buy_report
+from .reporting import (
+    build_college_vs_retirement_report,
+    build_job_offer_report,
+    build_rent_vs_buy_report,
+    build_retirement_survival_report,
+)
 from .repository import FileScenarioRepository, PostgresScenarioRepository, ScenarioBundle, ScenarioPage
 from .retirement_survival import RetirementSurvivalEngine
 from .rent_vs_buy import RentVsBuyEngine
@@ -81,6 +86,9 @@ __all__ = [
     "capital_gains_tax_on_sale_cents",
     "create_saved_scenario",
     "build_rent_vs_buy_report",
+    "build_retirement_survival_report",
+    "build_job_offer_report",
+    "build_college_vs_retirement_report",
     "incremental_itemized_deduction_cents",
     "incremental_mortgage_interest_deduction_cents",
     "mortgage_interest_tax_saving_cents",

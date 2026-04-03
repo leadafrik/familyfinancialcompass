@@ -1,11 +1,14 @@
 import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
 import type {
+  CollegeVsRetirementReport,
+  JobOfferReport,
   RentVsBuyReport,
   ReportAuditTrailRow,
   ReportInputsSummaryRow,
   ReportSensitivityRow,
   ReportYearRow,
+  RetirementSurvivalReport,
 } from "./types";
 
 const styles = StyleSheet.create({
@@ -452,6 +455,187 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
           <Text>Report narrative source: {report.narrative_source === "groq" ? "Groq" : "Template fallback"}.</Text>
         </View>
         <Footer pageNumber={8} />
+      </Page>
+    </Document>
+  );
+}
+
+export function RetirementSurvivalReportDocument({
+  report,
+}: {
+  report: RetirementSurvivalReport;
+}) {
+  return (
+    <Document title="Family Financial Compass Retirement Report">
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Retirement Survival Report</Text>
+        <Text style={styles.title}>The Verdict</Text>
+        <Text style={styles.subtitle}>
+          This report describes the survival odds of the current retirement plan under the modeled assumptions.
+        </Text>
+        <Text style={styles.disclaimer}>{report.disclaimer}</Text>
+        <View style={styles.verdictBox}>
+          <Text style={styles.verdictHeadline}>{report.narratives.summary}</Text>
+          <View style={styles.metricRow}>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>Plan survival</Text>
+              <Text style={styles.metricValue}>{formatPercent(report.verdict.probability_portfolio_survives)}</Text>
+            </View>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>95% safe rate</Text>
+              <Text style={styles.metricValue}>{formatPercent(report.verdict.safe_withdrawal_rate_95)}</Text>
+            </View>
+          </View>
+        </View>
+        <Text style={styles.paragraph}>{report.narratives.survival_verdict}</Text>
+        <Text style={styles.paragraph}>{report.narratives.withdrawal_rate_summary}</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Terminal wealth range</Text>
+          <Row label="Downside" value={formatCurrency(report.wealth_at_horizon.p10_terminal_wealth_cents)} />
+          <Row label="Median" value={formatCurrency(report.wealth_at_horizon.median_terminal_wealth_cents)} />
+          <Row label="Upside" value={formatCurrency(report.wealth_at_horizon.p90_terminal_wealth_cents)} last />
+        </View>
+        <Footer pageNumber={1} />
+      </Page>
+
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Page 2</Text>
+        <Text style={styles.title}>Inputs and Assumptions</Text>
+        <View style={styles.twoColumn}>
+          <View style={styles.column}>
+            <Text style={styles.sectionTitle}>Inputs</Text>
+            <KeyValueList rows={report.inputs_summary} />
+          </View>
+          <View style={styles.columnSpacer} />
+          <View style={styles.column}>
+            <Text style={styles.sectionTitle}>Assumptions</Text>
+            <KeyValueList rows={report.assumptions_summary} />
+          </View>
+        </View>
+        <Text style={styles.paragraph}>{report.narratives.wealth_range_summary}</Text>
+        <AuditTable rows={report.audit_trail} />
+        <Footer pageNumber={2} />
+      </Page>
+    </Document>
+  );
+}
+
+export function JobOfferReportDocument({ report }: { report: JobOfferReport }) {
+  return (
+    <Document title="Family Financial Compass Job Offer Report">
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Job Offer Report</Text>
+        <Text style={styles.title}>The Verdict</Text>
+        <Text style={styles.subtitle}>
+          This report compares the economics of the two offers descriptively. It does not tell the household what to do.
+        </Text>
+        <Text style={styles.disclaimer}>{report.disclaimer}</Text>
+        <View style={styles.verdictBox}>
+          <Text style={styles.verdictHeadline}>{report.narratives.summary}</Text>
+          <View style={styles.metricRow}>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>Break-even</Text>
+              <Text style={styles.metricValue}>{report.verdict.break_even_month === null ? "No break-even" : `Month ${report.verdict.break_even_month}`}</Text>
+            </View>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>Offer B wins</Text>
+              <Text style={styles.metricValue}>{formatPercent(report.verdict.probability_offer_b_wins)}</Text>
+            </View>
+          </View>
+        </View>
+        <Text style={styles.paragraph}>{report.narratives.offer_comparison}</Text>
+        <Text style={styles.paragraph}>{report.narratives.break_even_summary}</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Risk-adjusted view</Text>
+          <Row label="Deterministic advantage" value={formatCurrency(report.verdict.end_of_horizon_advantage_cents)} />
+          <Row label="Utility-adjusted advantage" value={formatCurrency(report.verdict.utility_adjusted_advantage_cents)} />
+          <Row label="Downside case" value={formatCurrency(report.risk.p10_terminal_advantage_cents)} />
+          <Row label="Upside case" value={formatCurrency(report.risk.p90_terminal_advantage_cents)} last />
+        </View>
+        <Footer pageNumber={1} />
+      </Page>
+
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Page 2</Text>
+        <Text style={styles.title}>Offer Comparison and Costs</Text>
+        <View style={styles.twoColumn}>
+          <View style={styles.column}>
+            <Text style={styles.sectionTitle}>{report.offers.offer_a_label}</Text>
+            <KeyValueList rows={report.offers.offer_a_summary} />
+          </View>
+          <View style={styles.columnSpacer} />
+          <View style={styles.column}>
+            <Text style={styles.sectionTitle}>{report.offers.offer_b_label}</Text>
+            <KeyValueList rows={report.offers.offer_b_summary} />
+          </View>
+        </View>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Year-one switch friction</Text>
+          <Row label="Relocation cost" value={formatCurrency(report.hidden_costs.offer_b.relocation_cost_cents)} />
+          <Row label="Cost-of-living change" value={formatCurrency(report.hidden_costs.offer_b.annual_cost_of_living_delta_cents)} />
+          <Row label="Commute cost" value={formatCurrency(report.hidden_costs.offer_b.annual_commute_cost_cents)} />
+          <Row label="After-tax sign-on bonus" value={formatCurrency(report.hidden_costs.offer_b.after_tax_sign_on_bonus_cents)} />
+          <Row label="Net first-year switch impact" value={formatCurrency(report.hidden_costs.offer_b_minus_offer_a_first_year_friction_cents)} last />
+        </View>
+        <AuditTable rows={report.audit_trail} />
+        <Footer pageNumber={2} />
+      </Page>
+    </Document>
+  );
+}
+
+export function CollegeVsRetirementReportDocument({
+  report,
+}: {
+  report: CollegeVsRetirementReport;
+}) {
+  return (
+    <Document title="Family Financial Compass College vs Retirement Report">
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>College vs Retirement Report</Text>
+        <Text style={styles.title}>The Tradeoff</Text>
+        <Text style={styles.subtitle}>
+          This report shows what prioritizing one family goal costs the other under the modeled assumptions.
+        </Text>
+        <Text style={styles.disclaimer}>{report.disclaimer}</Text>
+        <View style={styles.verdictBox}>
+          <Text style={styles.verdictHeadline}>{report.narratives.summary}</Text>
+          <View style={styles.metricRow}>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>Retirement-first wins</Text>
+              <Text style={styles.metricValue}>{formatPercent(report.verdict.probability_retirement_first_wins)}</Text>
+            </View>
+            <View style={styles.metricBlock}>
+              <Text style={styles.metricLabel}>Break-even</Text>
+              <Text style={styles.metricValue}>{report.verdict.break_even_year === null ? "No break-even" : `Year ${report.verdict.break_even_year}`}</Text>
+            </View>
+          </View>
+        </View>
+        <Text style={styles.paragraph}>{report.narratives.allocation_verdict}</Text>
+        <Text style={styles.paragraph}>{report.narratives.loan_impact_summary}</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Goal tradeoff</Text>
+          <Row label="College-first student debt" value={formatCurrency(report.funding_analysis.college_first_total_loan_cents)} />
+          <Row label="Retirement-first student debt" value={formatCurrency(report.funding_analysis.retirement_first_total_loan_cents)} />
+          <Row label="College-first retirement balance" value={formatCurrency(report.retirement_outcomes.college_first_terminal_retirement_cents)} />
+          <Row label="Retirement-first retirement balance" value={formatCurrency(report.retirement_outcomes.retirement_first_terminal_retirement_cents)} last />
+        </View>
+        <Footer pageNumber={1} />
+      </Page>
+
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Page 2</Text>
+        <Text style={styles.title}>Inputs and Audit Trail</Text>
+        <KeyValueList rows={report.inputs_summary} />
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Loan burden</Text>
+          <Row label="College-first annual payment" value={formatCurrency(report.funding_analysis.college_first_annual_loan_payment_cents)} />
+          <Row label="Retirement-first annual payment" value={formatCurrency(report.funding_analysis.retirement_first_annual_loan_payment_cents)} />
+          <Row label="College-first total interest" value={formatCurrency(report.funding_analysis.college_first_total_interest_cents)} />
+          <Row label="Retirement-first total interest" value={formatCurrency(report.funding_analysis.retirement_first_total_interest_cents)} last />
+        </View>
+        <AuditTable rows={report.audit_trail} />
+        <Footer pageNumber={2} />
       </Page>
     </Document>
   );

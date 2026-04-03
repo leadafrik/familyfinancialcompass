@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 
+from .config import build_behavioral_audit_trail
 from .models import (
     AssumptionAuditItem,
     JobOffer,
@@ -211,7 +214,12 @@ class JobOfferEngine:
         return offer.annual_equity_vesting_cents / gross
 
     def _build_audit_trail(self, user_inputs: JobOfferScenarioInput) -> tuple[AssumptionAuditItem, ...]:
-        return tuple([
+        behavioral_items = tuple(
+            item
+            for item in build_behavioral_audit_trail()
+            if item.parameter in {"scenario_count", "loss_aversion_lambda"}
+        )
+        return behavioral_items + tuple([
             AssumptionAuditItem(
                 name="Marginal tax rate",
                 parameter="job_offer_marginal_tax_rate",
@@ -219,16 +227,28 @@ class JobOfferEngine:
                 source="User input",
             ),
             AssumptionAuditItem(
-                name="Monte Carlo scenario count",
-                parameter="job_offer_scenario_count",
-                value=self.assumptions.monte_carlo.scenario_count,
-                source="System calibration",
+                name="Bonus payout market sensitivity (beta)",
+                parameter="job_offer_bonus_market_beta",
+                value=round(self.assumptions.job_offer_bonus_market_beta, 2),
+                source="Internal calibration; informed by Radford/Aon and Mercer compensation survey data",
+                last_updated=date(2025, 1, 1),
+                notes=(
+                    "Factor by which bonus payouts co-move with broad market conditions in simulation. "
+                    "This calibration treats bonus targets as partially insulated from market "
+                    "downturns through compensation committee adjustments."
+                ),
             ),
             AssumptionAuditItem(
-                name="Loss aversion lambda",
-                parameter="loss_aversion_lambda",
-                value=round(self.assumptions.behavioral.loss_aversion_lambda, 2),
-                source="Behavioral calibration",
+                name="Equity compensation market sensitivity (beta)",
+                parameter="job_offer_equity_market_beta",
+                value=round(self.assumptions.job_offer_equity_market_beta, 2),
+                source="Internal calibration; equity value directly tracks underlying market performance",
+                last_updated=date(2025, 1, 1),
+                notes=(
+                    "Factor by which equity compensation value co-moves with market conditions. "
+                    "Higher than the bonus beta because equity is priced directly by public markets "
+                    "rather than set by compensation committees."
+                ),
             ),
             AssumptionAuditItem(
                 name=f"{user_inputs.offer_a.label} bonus volatility",

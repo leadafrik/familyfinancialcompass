@@ -53,6 +53,7 @@ class AppSettings:
     groq_api_key: str | None
     groq_model: str
     groq_base_url: str
+    bls_api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -81,4 +82,5 @@ class AppSettings:
             groq_api_key=os.getenv("GROQ_API_KEY"),
             groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             groq_base_url=os.getenv("GROQ_API_BASE_URL", "https://api.groq.com/openai/v1/chat/completions"),
+            bls_api_key=os.getenv("BLS_API_KEY"),
         )

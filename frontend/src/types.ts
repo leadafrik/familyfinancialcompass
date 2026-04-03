@@ -7,7 +7,7 @@ export type FilingStatus = "single" | "married_filing_jointly";
 export interface RentVsBuyInputPayload {
   target_home_price_cents: number;
   down_payment_cents: number;
-  loan_term_years: 15 | 30;
+  loan_term_years: 15 | 20 | 30;
   expected_years_in_home: number;
   current_monthly_rent_cents: number;
   annual_household_income_cents: number;
@@ -418,10 +418,179 @@ export interface RentVsBuyReport {
   narrative_source: "groq" | "template";
 }
 
-export interface ReportEnvelope {
+export interface RetirementSurvivalReport {
+  generated_at: string;
   model_version: string;
   disclaimer: string;
-  report: RentVsBuyReport;
+  verdict: {
+    probability_portfolio_survives: number;
+    safe_withdrawal_rate_95: number;
+    deterministic_depletion_year: number | null;
+    conditional_median_depletion_year: number | null;
+    horizon_years: number;
+  };
+  inputs_summary: ReportInputsSummaryRow[];
+  assumptions_summary: ReportInputsSummaryRow[];
+  yearly_projection: Array<{
+    year: number;
+    deterministic_portfolio_cents: number;
+    median_portfolio_cents: number;
+    p10_portfolio_cents: number;
+    p90_portfolio_cents: number;
+    cumulative_depletion_probability: number;
+  }>;
+  wealth_at_horizon: {
+    deterministic_terminal_wealth_cents: number;
+    median_terminal_wealth_cents: number;
+    p10_terminal_wealth_cents: number;
+    p90_terminal_wealth_cents: number;
+  };
+  withdrawal_analysis: {
+    current_withdrawal_rate: number;
+    safe_withdrawal_rate_95: number;
+    withdrawal_rate_gap: number;
+    safe_withdrawal_annual_cents: number;
+    safe_withdrawal_gap_cents: number;
+    net_annual_withdrawal_cents: number;
+  };
+  audit_trail: ReportAuditTrailRow[];
+  warnings: string[];
+  narratives: {
+    survival_verdict: string;
+    withdrawal_rate_summary: string;
+    wealth_range_summary: string;
+    risk_summary: string;
+    summary: string;
+  };
+  narrative_source: "groq" | "template";
+}
+
+export interface JobOfferReport {
+  generated_at: string;
+  model_version: string;
+  disclaimer: string;
+  verdict: {
+    winner_label: string;
+    break_even_month: number | null;
+    probability_offer_b_wins: number;
+    end_of_horizon_advantage_cents: number;
+    utility_adjusted_advantage_cents: number;
+  };
+  offers: {
+    offer_a_label: string;
+    offer_b_label: string;
+    offer_a_summary: ReportInputsSummaryRow[];
+    offer_b_summary: ReportInputsSummaryRow[];
+  };
+  yearly_comparison: Array<{
+    year: number;
+    offer_a_annual_net_value_cents: number;
+    offer_b_annual_net_value_cents: number;
+    offer_a_cumulative_value_cents: number;
+    offer_b_cumulative_value_cents: number;
+    offer_b_minus_offer_a_cents: number;
+  }>;
+  risk: {
+    p10_terminal_advantage_cents: number;
+    median_terminal_advantage_cents: number;
+    p90_terminal_advantage_cents: number;
+    local_market_concentration: boolean;
+    warnings: string[];
+  };
+  hidden_costs: {
+    offer_a: {
+      relocation_cost_cents: number;
+      annual_cost_of_living_delta_cents: number;
+      annual_commute_cost_cents: number;
+      after_tax_sign_on_bonus_cents: number;
+    };
+    offer_b: {
+      relocation_cost_cents: number;
+      annual_cost_of_living_delta_cents: number;
+      annual_commute_cost_cents: number;
+      after_tax_sign_on_bonus_cents: number;
+    };
+    offer_b_minus_offer_a_first_year_friction_cents: number;
+  };
+  sensitivity: {
+    rows: Array<{
+      label: string;
+      break_even_month: number | null;
+      break_even_label: string;
+      probability_offer_b_wins: number;
+      probability_offer_b_wins_label: string;
+      probability_shift_points: number;
+    }>;
+    most_sensitive_label: string;
+    largest_probability_shift_points: number;
+  };
+  audit_trail: ReportAuditTrailRow[];
+  narratives: {
+    offer_comparison: string;
+    break_even_summary: string;
+    risk_summary: string;
+    hidden_costs_summary: string;
+    summary: string;
+  };
+  narrative_source: "groq" | "template";
+}
+
+export interface CollegeVsRetirementReport {
+  generated_at: string;
+  model_version: string;
+  disclaimer: string;
+  verdict: {
+    winner_label: string;
+    break_even_year: number | null;
+    probability_retirement_first_wins: number;
+    end_of_horizon_advantage_cents: number;
+    utility_adjusted_advantage_cents: number;
+  };
+  inputs_summary: ReportInputsSummaryRow[];
+  funding_analysis: {
+    college_first_total_loan_cents: number;
+    retirement_first_total_loan_cents: number;
+    college_first_annual_loan_payment_cents: number;
+    retirement_first_annual_loan_payment_cents: number;
+    college_first_total_interest_cents: number;
+    retirement_first_total_interest_cents: number;
+  };
+  retirement_outcomes: {
+    college_first_terminal_retirement_cents: number;
+    retirement_first_terminal_retirement_cents: number;
+    median_retirement_first_terminal_retirement_cents: number;
+    median_college_first_terminal_retirement_cents: number;
+    p10_terminal_advantage_cents: number;
+    p90_terminal_advantage_cents: number;
+  };
+  yearly_comparison: Array<{
+    year: number;
+    college_first_net_worth_cents: number;
+    retirement_first_net_worth_cents: number;
+    retirement_first_minus_college_first_cents: number;
+    college_first_retirement_cents: number;
+    retirement_first_retirement_cents: number;
+    college_first_college_fund_cents: number;
+    retirement_first_college_fund_cents: number;
+    college_first_loan_balance_cents: number;
+    retirement_first_loan_balance_cents: number;
+  }>;
+  warnings: string[];
+  audit_trail: ReportAuditTrailRow[];
+  narratives: {
+    allocation_verdict: string;
+    loan_impact_summary: string;
+    retirement_outcome_summary: string;
+    risk_summary: string;
+    summary: string;
+  };
+  narrative_source: "groq" | "template";
+}
+
+export interface ReportEnvelope<TReport = RentVsBuyReport> {
+  model_version: string;
+  disclaimer: string;
+  report: TReport;
 }
 
 export interface CurrentAssumptionsEnvelope {
@@ -472,7 +641,7 @@ export interface ScenarioListEnvelope {
 export interface FormState {
   targetHomePrice: string;
   downPayment: string;
-  loanTermYears: "15" | "30";
+  loanTermYears: "15" | "20" | "30";
   expectedYearsInHome: string;
   monthlyRent: string;
   annualIncome: string;

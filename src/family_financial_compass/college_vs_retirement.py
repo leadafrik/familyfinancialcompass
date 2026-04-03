@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 
+from .config import build_behavioral_audit_trail
 from .models import (
     AssumptionAuditItem,
     CollegeVsRetirementAnalysis,
@@ -280,6 +283,11 @@ class CollegeVsRetirementEngine:
         user_inputs: CollegeVsRetirementScenarioInput,
     ) -> tuple[AssumptionAuditItem, ...]:
         trail = [
+            item
+            for item in build_behavioral_audit_trail()
+            if item.parameter in {"scenario_count", "loss_aversion_lambda", "panic_sale_expected_return_penalty"}
+        ]
+        trail.extend([
             AssumptionAuditItem(
                 name="Expected portfolio return",
                 parameter="expected_annual_return_rate",
@@ -287,37 +295,48 @@ class CollegeVsRetirementEngine:
                 source="User input",
             ),
             AssumptionAuditItem(
-                name="College tuition inflation",
+                name="Tuition inflation rate",
                 parameter="college_tuition_inflation_rate",
                 value=f"{self.assumptions.college_tuition_inflation_rate * 100:.2f}%",
-                source="System assumption",
+                source="College Board - Trends in College Pricing 2024. 40-year average net tuition inflation approximately 4-5% annually.",
+                last_updated=date(2024, 1, 1),
+                notes="Applied to current tuition to project future costs.",
             ),
             AssumptionAuditItem(
-                name="Student loan rate",
+                name="Federal student loan rate",
                 parameter="college_student_loan_rate",
                 value=f"{self.assumptions.college_student_loan_rate * 100:.2f}%",
-                source="System assumption",
+                source="U.S. Department of Education - Federal Direct Unsubsidized Loan rate for undergraduates, 2024-2025 academic year.",
+                last_updated=date(2024, 7, 1),
             ),
             AssumptionAuditItem(
-                name="Student loan term",
+                name="Standard loan repayment term",
                 parameter="college_student_loan_term_years",
                 value=self.assumptions.college_student_loan_term_years,
-                source="System assumption",
+                source="U.S. Department of Education - Standard Repayment Plan, 10-year term.",
+                last_updated=date(2024, 1, 1),
+                notes="Actual repayment term varies by plan (income-driven plans: 20-25 years).",
             ),
             AssumptionAuditItem(
-                name="Return volatility",
+                name=f"Portfolio return volatility ({user_inputs.risk_profile.value} profile)",
                 parameter="college_vs_retirement_return_volatility",
                 value=f"{self._volatility(user_inputs) * 100:.2f}%",
-                source="Risk calibration",
+                source="Internal risk calibration; consistent with Vanguard and Morningstar historical portfolio return distributions",
+                notes=(
+                    "Annualized standard deviation applied to simulated portfolio returns. "
+                    f"Uses the {user_inputs.risk_profile.value} risk profile "
+                    f"with {user_inputs.loss_behavior.value.replace('_', ' ')} loss behavior."
+                ),
             ),
-        ]
+        ])
         if user_inputs.loss_behavior == LossBehavior.SELL_TO_CASH:
             trail.append(
                 AssumptionAuditItem(
-                    name="Panic-sale return penalty",
+                    name="Panic-sale return penalty applied",
                     parameter="panic_sale_expected_return_penalty",
                     value=f"{self.assumptions.behavioral.panic_sale_expected_return_penalty * 100:.2f}%",
-                    source="Behavioral calibration",
+                    source="DALBAR QAIB 2023",
+                    notes="Return reduced because loss_behavior is SELL_TO_CASH.",
                 )
             )
         return tuple(trail)

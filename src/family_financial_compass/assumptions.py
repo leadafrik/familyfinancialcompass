@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
+import dataclasses
+import io
 import json
-import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -18,11 +20,12 @@ from .config import (
 )
 from .models import AssumptionAuditItem, AssumptionOverrides
 
-_FREDDIE_MAC_URL = "https://myhome.freddiemac.com/buying/mortgage-rates"
+_FREDDIE_MAC_URL = "https://www.freddiemac.com/pmms/docs/PMMS_history.csv"
 _BLS_API_URL = "https://api.bls.gov/publicAPI/v1/timeseries/data/"
 _BLS_RENT_SERIES_ID = "CUUR0000SEHA"
 _BLS_INSURANCE_SERIES_ID = "CUUR0000SEHD"
 _DEFAULT_TIMEOUT_SECONDS = 15
+_DYNAMIC_SOURCE_KEYS = frozenset({"mortgage_rate", "rent_series", "insurance_series"})
 _ASSUMPTION_LABELS = {
     "mortgage_rate": "Mortgage rate",
     "property_tax_rate": "Property tax",
@@ -87,9 +90,9 @@ def apply_assumption_overrides(
         return bundle
 
     replacement_fields = {
-        field_name: value
-        for field_name, value in overrides.__dict__.items()
-        if value is not None
+        field_.name: getattr(overrides, field_.name)
+        for field_ in dataclasses.fields(overrides)
+        if getattr(overrides, field_.name) is not None
     }
     if not replacement_fields:
         return bundle
@@ -169,8 +172,13 @@ class InMemoryAssumptionStore:
 
 
 class OnlineMarketDataClient:
-    def __init__(self, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+        bls_api_key: str | None = None,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.bls_api_key = bls_api_key
 
     def fetch_primary_mortgage_market_survey(self) -> MortgageRateSnapshot:
         request = Request(
@@ -178,30 +186,32 @@ class OnlineMarketDataClient:
             headers={"User-Agent": "family-financial-compass/0.1"},
         )
         with urlopen(request, timeout=self.timeout_seconds) as response:
-            html = response.read().decode("utf-8", errors="ignore")
+            raw = response.read().decode("utf-8", errors="ignore")
 
-        date_match = re.search(
-            r"Mortgage Rates as of\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
-            html,
-            re.IGNORECASE,
-        )
-        thirty_match = re.search(
-            r"30-Yr FRM</div>\s*<div class=\"stat\">\s*([\d.]+)%",
-            html,
-            re.IGNORECASE,
-        )
-        fifteen_match = re.search(
-            r"15-Yr FRM</div>\s*<div class=\"stat\">\s*([\d.]+)%",
-            html,
-            re.IGNORECASE,
-        )
-        if not (date_match and thirty_match and fifteen_match):
-            raise ValueError("Freddie Mac mortgage page format did not match expected content.")
+        reader = csv.DictReader(io.StringIO(raw))
+        best_row: dict | None = None
+        best_date: date | None = None
+        for row in reader:
+            pmms30 = row.get("pmms30", "").strip()
+            pmms15 = row.get("pmms15", "").strip()
+            raw_date = row.get("date", "").strip()
+            if not (pmms30 and pmms15 and raw_date):
+                continue
+            try:
+                row_date = datetime.strptime(raw_date, "%m/%d/%Y").date()
+            except ValueError:
+                continue
+            if best_date is None or row_date > best_date:
+                best_date = row_date
+                best_row = row
+
+        if best_row is None or best_date is None:
+            raise ValueError("Freddie Mac PMMS CSV contained no usable rows.")
 
         return MortgageRateSnapshot(
-            rate_date=datetime.strptime(date_match.group(1), "%B %d, %Y").date(),
-            thirty_year_fixed=float(thirty_match.group(1)) / 100.0,
-            fifteen_year_fixed=float(fifteen_match.group(1)) / 100.0,
+            rate_date=best_date,
+            thirty_year_fixed=float(best_row["pmms30"]) / 100.0,
+            fifteen_year_fixed=float(best_row["pmms15"]) / 100.0,
             source_name="Freddie Mac PMMS",
         )
 
@@ -209,9 +219,11 @@ class OnlineMarketDataClient:
         current_year = datetime.now(timezone.utc).year
         payload = {
             "seriesid": [series_id],
-            "startyear": str(current_year - 2),
+            "startyear": str(current_year - 3),
             "endyear": str(current_year),
         }
+        if self.bls_api_key:
+            payload["registrationkey"] = self.bls_api_key
         request = Request(
             _BLS_API_URL,
             data=json.dumps(payload).encode("utf-8"),
@@ -268,23 +280,24 @@ class PostgresAssumptionStore:
         fallback_path: Path | str = DEFAULT_ASSUMPTIONS_PATH,
         cache_ttl_days: int = 1,
         market_data_client: OnlineMarketDataClient | None = None,
+        bls_api_key: str | None = None,
     ) -> None:
         self._pool = pool
         self._fallback_path = Path(fallback_path)
         self._cache_ttl_days = max(cache_ttl_days, 1)
-        self._market_data_client = market_data_client or OnlineMarketDataClient()
+        self._market_data_client = market_data_client or OnlineMarketDataClient(bls_api_key=bls_api_key)
         self._schema_ready = False
 
     def get_current_bundle(self) -> LoadedAssumptionBundle:
         today = datetime.now(timezone.utc).date()
-        fallback_bundle = load_assumption_bundle(self._fallback_path)
         with self._pool.connection() as conn:
             self._ensure_schema(conn)
             current = self._fetch_active_row(conn)
             if current is None:
+                fallback_bundle = load_assumption_bundle(self._fallback_path)
                 try:
                     bundle, dynamic_inputs = self._build_dynamic_bundle(fallback_bundle, None)
-                    source = "postgres:auto"
+                    source = self._dynamic_source_label(dynamic_inputs)
                 except (HTTPError, URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
                     bundle, dynamic_inputs = fallback_bundle, {}
                     source = "postgres:fallback"
@@ -312,12 +325,20 @@ class PostgresAssumptionStore:
                     current["dynamic_inputs_json"],
                 )
             except (HTTPError, URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
-                return loaded
+                fallback_bundle = load_assumption_bundle(self._fallback_path)
+                return self._activate_bundle(
+                    conn=conn,
+                    bundle=fallback_bundle,
+                    source="postgres:fallback",
+                    cache_date=today,
+                    refresh_mode="auto",
+                    dynamic_inputs={},
+                )
 
             return self._activate_bundle(
                 conn=conn,
                 bundle=refreshed_bundle,
-                source="postgres:auto",
+                source=self._dynamic_source_label(dynamic_inputs),
                 cache_date=today,
                 refresh_mode="auto",
                 dynamic_inputs=dynamic_inputs,
@@ -326,33 +347,37 @@ class PostgresAssumptionStore:
     def _ensure_schema(self, conn: Any) -> None:
         if self._schema_ready:
             return
-        conn.execute(
-            """
-            create table if not exists assumption_sets (
-                id uuid primary key default gen_random_uuid(),
-                set_key text not null unique,
-                model_version text not null,
-                refresh_mode text not null default 'auto',
-                source_label text not null,
-                cache_date date not null,
-                assumptions_json jsonb not null,
-                audit_trail_json jsonb not null,
-                dynamic_inputs_json jsonb not null default '{}'::jsonb,
-                is_active boolean not null default false,
-                created_at timestamptz not null default now(),
-                activated_at timestamptz not null default now(),
-                check (refresh_mode in ('auto', 'manual'))
+        with conn.transaction():
+            conn.execute(
+                """
+                create table if not exists assumption_sets (
+                    id uuid primary key default gen_random_uuid(),
+                    set_key text not null unique,
+                    model_version text not null,
+                    refresh_mode text not null default 'auto',
+                    source_label text not null,
+                    cache_date date not null,
+                    assumptions_json jsonb not null,
+                    audit_trail_json jsonb not null,
+                    dynamic_inputs_json jsonb not null default '{}'::jsonb,
+                    is_active boolean not null default false,
+                    created_at timestamptz not null default now(),
+                    activated_at timestamptz not null default now(),
+                    check (refresh_mode in ('auto', 'manual'))
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            create unique index if not exists idx_assumption_sets_active
-            on assumption_sets ((1))
-            where is_active
-            """
-        )
+            conn.execute(
+                """
+                create unique index if not exists idx_assumption_sets_active
+                on assumption_sets ((1))
+                where is_active
+                """
+            )
         self._schema_ready = True
+
+    def _dynamic_source_label(self, dynamic_inputs: dict[str, object]) -> str:
+        return "postgres:auto" if _DYNAMIC_SOURCE_KEYS.issubset(dynamic_inputs) else "postgres:partial"
 
     def _fetch_active_row(self, conn: Any) -> dict[str, Any] | None:
         row = conn.execute(
@@ -457,30 +482,54 @@ class PostgresAssumptionStore:
         previous_dynamic_inputs: dict[str, object] | str | None,
     ) -> tuple[AssumptionBundle, dict[str, object]]:
         dynamic_inputs = json.loads(previous_dynamic_inputs) if isinstance(previous_dynamic_inputs, str) else (previous_dynamic_inputs or {})
-        mortgage = self._market_data_client.fetch_primary_mortgage_market_survey()
-        rent_series = self._market_data_client.fetch_bls_series(_BLS_RENT_SERIES_ID)
-        insurance_series = self._market_data_client.fetch_bls_series(_BLS_INSURANCE_SERIES_ID)
+        mortgage: MortgageRateSnapshot | None = None
+        updated_mortgage_rate = base_bundle.assumptions.mortgage_rate
+        try:
+            mortgage = self._market_data_client.fetch_primary_mortgage_market_survey()
+            updated_mortgage_rate = mortgage.thirty_year_fixed
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            mortgage = None
 
+        rent_series: BlsSeriesSnapshot | None = None
+        updated_rent_growth = base_bundle.assumptions.annual_rent_growth_rate
+        try:
+            rent_series = self._market_data_client.fetch_bls_series(_BLS_RENT_SERIES_ID)
+            updated_rent_growth = rent_series.yoy_change
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            rent_series = None
+
+        insurance_snapshot: BlsSeriesSnapshot | None = None
+        audit_insurance_series: BlsSeriesSnapshot | None = None
         annual_home_insurance_cents = base_bundle.assumptions.annual_home_insurance_cents
-        previous_insurance = dynamic_inputs.get("insurance_series")
-        if isinstance(previous_insurance, dict):
-            previous_value = float(previous_insurance.get("value", 0.0))
-            if previous_value > 0:
-                annual_home_insurance_cents = int(
-                    round(
-                        annual_home_insurance_cents
-                        * (insurance_series.value / previous_value)
+        try:
+            insurance_snapshot = self._market_data_client.fetch_bls_series(_BLS_INSURANCE_SERIES_ID)
+            previous_insurance = dynamic_inputs.get("insurance_series")
+            if isinstance(previous_insurance, dict):
+                previous_value = float(previous_insurance.get("value", 0.0))
+                if previous_value > 0:
+                    adjusted_value = int(
+                        round(
+                            annual_home_insurance_cents
+                            * (insurance_snapshot.value / previous_value)
+                        )
                     )
-                )
+                    static_baseline = load_assumption_bundle(self._fallback_path).assumptions.annual_home_insurance_cents
+                    floor = int(static_baseline * 0.50)
+                    ceiling = int(static_baseline * 3.00)
+                    annual_home_insurance_cents = max(floor, min(ceiling, adjusted_value))
+                    audit_insurance_series = insurance_snapshot
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            insurance_snapshot = None
+            audit_insurance_series = None
 
         assumptions = replace(
             base_bundle.assumptions,
-            mortgage_rate=mortgage.thirty_year_fixed,
-            annual_rent_growth_rate=rent_series.yoy_change,
+            mortgage_rate=updated_mortgage_rate,
+            annual_rent_growth_rate=updated_rent_growth,
             annual_home_insurance_cents=annual_home_insurance_cents,
             monte_carlo=replace(
                 base_bundle.assumptions.monte_carlo,
-                annual_rent_growth_mean=rent_series.yoy_change,
+                annual_rent_growth_mean=updated_rent_growth,
             ),
         )
         audit_trail = self._update_dynamic_audit_items(
@@ -488,48 +537,50 @@ class PostgresAssumptionStore:
             mortgage=mortgage,
             rent_series=rent_series,
             annual_home_insurance_cents=annual_home_insurance_cents,
-            insurance_series=insurance_series,
+            insurance_series=audit_insurance_series,
         )
         refreshed_bundle = AssumptionBundle(
             assumptions=assumptions,
             audit_trail=audit_trail,
         )
-        refreshed_inputs = {
-            "mortgage_rate": {
+        refreshed_inputs: dict[str, object] = {}
+        if mortgage is not None:
+            refreshed_inputs["mortgage_rate"] = {
                 "rate_date": mortgage.rate_date.isoformat(),
                 "thirty_year_fixed": mortgage.thirty_year_fixed,
                 "fifteen_year_fixed": mortgage.fifteen_year_fixed,
                 "source_name": mortgage.source_name,
-            },
-            "rent_series": {
+            }
+        if rent_series is not None:
+            refreshed_inputs["rent_series"] = {
                 "series_id": rent_series.series_id,
                 "observation_date": rent_series.observation_date.isoformat(),
                 "value": rent_series.value,
                 "yoy_change": rent_series.yoy_change,
                 "source_name": rent_series.source_name,
-            },
-            "insurance_series": {
-                "series_id": insurance_series.series_id,
-                "observation_date": insurance_series.observation_date.isoformat(),
-                "value": insurance_series.value,
-                "yoy_change": insurance_series.yoy_change,
-                "source_name": insurance_series.source_name,
-            },
-        }
+            }
+        if insurance_snapshot is not None:
+            refreshed_inputs["insurance_series"] = {
+                "series_id": insurance_snapshot.series_id,
+                "observation_date": insurance_snapshot.observation_date.isoformat(),
+                "value": insurance_snapshot.value,
+                "yoy_change": insurance_snapshot.yoy_change,
+                "source_name": insurance_snapshot.source_name,
+            }
         return refreshed_bundle, refreshed_inputs
 
     def _update_dynamic_audit_items(
         self,
         audit_trail: tuple[AssumptionAuditItem, ...],
-        mortgage: MortgageRateSnapshot,
-        rent_series: BlsSeriesSnapshot,
+        mortgage: MortgageRateSnapshot | None,
+        rent_series: BlsSeriesSnapshot | None,
         annual_home_insurance_cents: int,
-        insurance_series: BlsSeriesSnapshot,
+        insurance_series: BlsSeriesSnapshot | None,
     ) -> tuple[AssumptionAuditItem, ...]:
         updated: list[AssumptionAuditItem] = []
         replaced_parameters: set[str] = set()
         for item in audit_trail:
-            if item.parameter == "mortgage_rate":
+            if item.parameter == "mortgage_rate" and mortgage is not None:
                 updated.append(
                     AssumptionAuditItem(
                         name="30-year mortgage rate",
@@ -542,7 +593,7 @@ class PostgresAssumptionStore:
                 )
                 replaced_parameters.add("mortgage_rate")
                 continue
-            if item.parameter == "annual_rent_growth_rate":
+            if item.parameter == "annual_rent_growth_rate" and rent_series is not None:
                 updated.append(
                     AssumptionAuditItem(
                         name="Rent growth default",
@@ -555,7 +606,7 @@ class PostgresAssumptionStore:
                 )
                 replaced_parameters.add("annual_rent_growth_rate")
                 continue
-            if item.parameter == "annual_home_insurance_cents":
+            if item.parameter == "annual_home_insurance_cents" and insurance_series is not None:
                 updated.append(
                     AssumptionAuditItem(
                         name="Annual home insurance",
@@ -571,7 +622,7 @@ class PostgresAssumptionStore:
                 continue
             updated.append(item)
 
-        if "mortgage_rate" not in replaced_parameters:
+        if mortgage is not None and "mortgage_rate" not in replaced_parameters:
             updated.append(
                 AssumptionAuditItem(
                     name="30-year mortgage rate",
@@ -582,7 +633,7 @@ class PostgresAssumptionStore:
                     last_updated=mortgage.rate_date,
                 )
             )
-        if "annual_rent_growth_rate" not in replaced_parameters:
+        if rent_series is not None and "annual_rent_growth_rate" not in replaced_parameters:
             updated.append(
                 AssumptionAuditItem(
                     name="Rent growth default",
@@ -593,7 +644,7 @@ class PostgresAssumptionStore:
                     last_updated=rent_series.observation_date,
                 )
             )
-        if "annual_home_insurance_cents" not in replaced_parameters:
+        if insurance_series is not None and "annual_home_insurance_cents" not in replaced_parameters:
             updated.append(
                 AssumptionAuditItem(
                     name="Annual home insurance",

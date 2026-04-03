@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import numpy_financial as npf
 
-from .config import build_default_audit_trail, get_calibration
+from .config import build_behavioral_audit_trail, build_default_audit_trail, get_calibration, get_property_tax_rate
 from .models import (
     AmortizationRow,
     AssumptionAuditItem,
@@ -72,8 +72,8 @@ class RentVsBuyEngine:
         return get_calibration(user_inputs.market_region)
 
     def _validate_inputs(self, user_inputs: UserScenarioInput) -> None:
-        if user_inputs.loan_term_years not in {15, 30}:
-            raise ValueError("Loan term must be 15 or 30 years.")
+        if user_inputs.loan_term_years not in {15, 20, 30}:
+            raise ValueError("Loan term must be 15, 20, or 30 years.")
         if not (0.0 <= user_inputs.marginal_tax_rate <= 0.60):
             raise ValueError(
                 f"marginal_tax_rate must be between 0.0 and 0.60, got {user_inputs.marginal_tax_rate}"
@@ -97,6 +97,9 @@ class RentVsBuyEngine:
 
     def _closing_costs_cents(self, user_inputs: UserScenarioInput) -> int:
         return int(round(user_inputs.target_home_price_cents * self.assumptions.buyer_closing_cost_rate))
+
+    def _effective_property_tax_rate(self, user_inputs: UserScenarioInput) -> float:
+        return get_property_tax_rate(user_inputs.market_region, self.assumptions.property_tax_rate)
 
     def _liquidity_premium_rate(self, user_inputs: UserScenarioInput) -> float:
         if user_inputs.income_stability == IncomeStability.VARIABLE:
@@ -129,29 +132,45 @@ class RentVsBuyEngine:
         return band.stated
 
     def _build_audit_trail(self, user_inputs: UserScenarioInput) -> list[AssumptionAuditItem]:
-        trail = build_default_audit_trail()
-        trail.extend(
-            [
-                AssumptionAuditItem(
-                    name="Expected home appreciation",
-                    parameter="expected_home_appreciation_rate",
-                    value=percentage(user_inputs.expected_home_appreciation_rate),
-                    source="User input",
+        trail = list(build_default_audit_trail())
+        existing_parameters = {item.parameter for item in trail if item.parameter}
+        for item in build_behavioral_audit_trail():
+            if item.parameter not in existing_parameters:
+                trail.append(item)
+                if item.parameter:
+                    existing_parameters.add(item.parameter)
+        calibration = self._get_calibration(user_inputs)
+        trail.extend([
+            AssumptionAuditItem(
+                name="Expected home appreciation",
+                parameter="expected_home_appreciation_rate",
+                value=percentage(user_inputs.expected_home_appreciation_rate),
+                source="User input",
+            ),
+            AssumptionAuditItem(
+                name="Expected investment return",
+                parameter="expected_investment_return_rate",
+                value=percentage(user_inputs.expected_investment_return_rate),
+                source="User input",
+            ),
+            AssumptionAuditItem(
+                name="Liquidity premium",
+                parameter="liquidity_premium_rate",
+                value=percentage(self._liquidity_premium_rate(user_inputs)),
+                source="Behavioral calibration",
+            ),
+            AssumptionAuditItem(
+                name=f"Investment return volatility ({user_inputs.risk_profile.value} profile)",
+                parameter="investment_return_volatility",
+                value=percentage(self._investment_volatility(user_inputs, calibration)),
+                source="Internal risk calibration; consistent with Vanguard and Morningstar historical portfolio return distributions",
+                notes=(
+                    f"Annualized standard deviation of investment returns applied in Monte Carlo simulation "
+                    f"for a {user_inputs.risk_profile.value} risk profile with "
+                    f"{user_inputs.loss_behavior.value.replace('_', ' ')} loss behavior."
                 ),
-                AssumptionAuditItem(
-                    name="Expected investment return",
-                    parameter="expected_investment_return_rate",
-                    value=percentage(user_inputs.expected_investment_return_rate),
-                    source="User input",
-                ),
-                AssumptionAuditItem(
-                    name="Liquidity premium",
-                    parameter="liquidity_premium_rate",
-                    value=percentage(self._liquidity_premium_rate(user_inputs)),
-                    source="Behavioral calibration",
-                ),
-            ]
-        )
+            ),
+        ])
         return trail
 
     def _build_warnings(self, user_inputs: UserScenarioInput) -> list[str]:
@@ -299,7 +318,7 @@ class RentVsBuyEngine:
             annual_rent_growth_rate=self.assumptions.annual_rent_growth_rate,
             horizon_months=horizon,
         )
-        property_tax = np.round(home_value * self.assumptions.property_tax_rate / 12.0).astype(np.int64)
+        property_tax = np.round(home_value * self._effective_property_tax_rate(user_inputs) / 12.0).astype(np.int64)
         insurance = np.round(
             annual_to_monthly_payment(self.assumptions.annual_home_insurance_cents)
             * np.power(1.0 + annual_to_monthly_rate(self.assumptions.annual_rent_growth_rate), np.arange(horizon))
@@ -463,7 +482,7 @@ class RentVsBuyEngine:
                 annual_appreciation_rate=calibration.annual_appreciation_mean,
                 horizon_months=horizon,
             )
-            * self.assumptions.property_tax_rate
+            * self._effective_property_tax_rate(user_inputs)
             / 12.0
         ).astype(np.int64)
         return self._annual_tax_saving_schedule(interest, property_tax, user_inputs)
@@ -593,7 +612,7 @@ class RentVsBuyEngine:
 
             balance = balances[:, month]
             monthly_payment = payment_scalar if month < amortization_months else 0
-            property_tax = np.round(home_value * self.assumptions.property_tax_rate / 12.0).astype(np.int64)
+            property_tax = np.round(home_value * self._effective_property_tax_rate(user_inputs) / 12.0).astype(np.int64)
             insurance = np.round(insurance_base * insurance_inflation_index).astype(np.int64)
             maintenance = np.round(home_value * self.assumptions.maintenance_rate / 12.0).astype(np.int64)
             equity = np.maximum(home_value - balance, 0)

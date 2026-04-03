@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 
+from .config import build_behavioral_audit_trail
 from .models import (
     AssumptionAuditItem,
     LossBehavior,
@@ -158,7 +161,8 @@ class RetirementSurvivalEngine:
         )
 
     def _build_audit_trail(self, user_inputs: RetirementScenarioInput) -> list[AssumptionAuditItem]:
-        trail = [
+        trail = list(build_behavioral_audit_trail())
+        trail.extend([
             AssumptionAuditItem(
                 name="Expected portfolio return",
                 parameter="expected_annual_return_rate",
@@ -166,25 +170,32 @@ class RetirementSurvivalEngine:
                 source="User input",
             ),
             AssumptionAuditItem(
-                name="Return volatility",
+                name=f"Portfolio return volatility ({user_inputs.risk_profile.value} profile)",
                 parameter="retirement_return_volatility",
                 value=f"{self._volatility(user_inputs) * 100:.2f}%",
-                source="Risk calibration",
+                source="Internal risk calibration; consistent with Vanguard and Morningstar historical portfolio return distributions",
+                notes=(
+                    "Annualized standard deviation applied to simulated portfolio returns. "
+                    f"Uses the {user_inputs.risk_profile.value} risk profile "
+                    f"with {user_inputs.loss_behavior.value.replace('_', ' ')} loss behavior."
+                ),
             ),
             AssumptionAuditItem(
                 name="Return autocorrelation",
                 parameter="retirement_return_autocorrelation",
                 value=round(self.assumptions.retirement_return_autocorrelation, 2),
-                source="Retirement simulation calibration",
+                source="Retirement simulation calibration. AR(1) momentum parameter.",
+                last_updated=date(2025, 1, 1),
             ),
-        ]
+        ])
         if user_inputs.loss_behavior == LossBehavior.SELL_TO_CASH:
             trail.append(
                 AssumptionAuditItem(
-                    name="Panic-sale return penalty",
+                    name="Panic-sale return penalty applied",
                     parameter="panic_sale_expected_return_penalty",
                     value=f"{self.assumptions.behavioral.panic_sale_expected_return_penalty * 100:.2f}%",
-                    source="Behavioral calibration",
+                    source="DALBAR QAIB 2023",
+                    notes="Return reduced because loss_behavior is SELL_TO_CASH.",
                 )
             )
         return trail

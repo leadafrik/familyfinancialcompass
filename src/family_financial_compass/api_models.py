@@ -26,7 +26,7 @@ class RentVsBuyInputModel(BaseModel):
 
     target_home_price_cents: StrictInt = Field(gt=0)
     down_payment_cents: StrictInt = Field(ge=0)
-    loan_term_years: Literal[15, 30]
+    loan_term_years: Literal[15, 20, 30]
     expected_years_in_home: float = Field(gt=0)
     current_monthly_rent_cents: StrictInt = Field(gt=0)
     annual_household_income_cents: StrictInt = Field(gt=0)
@@ -105,6 +105,15 @@ class RetirementAnalyzeRequest(BaseModel):
     audit_trail_snapshot: list[dict[str, Any]] | None = None
 
 
+class RetirementReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: RetirementInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
+
+
 class JobOfferModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -154,6 +163,15 @@ class JobOfferAnalyzeRequest(BaseModel):
     audit_trail_snapshot: list[dict[str, Any]] | None = None
 
 
+class JobOfferReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: JobOfferAnalyzeInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
+
+
 class CollegeVsRetirementInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -173,6 +191,15 @@ class CollegeVsRetirementInputModel(BaseModel):
 
 
 class CollegeVsRetirementAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: CollegeVsRetirementInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
+
+
+class CollegeVsRetirementReportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: CollegeVsRetirementInputModel
