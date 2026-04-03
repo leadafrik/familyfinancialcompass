@@ -126,6 +126,7 @@ class SystemAssumptions:
     annual_pmi_rate: float
     monte_carlo: MonteCarloCalibration
     behavioral: BehavioralAdjustments
+    retirement_return_autocorrelation: float = 0.15
     buyer_closing_cost_rate: float = 0.03
 
     def __post_init__(self) -> None:
@@ -142,6 +143,8 @@ class SystemAssumptions:
                 raise ValueError(f"{name} must be between 0 and 1.")
         if not -1.0 < self.annual_rent_growth_rate <= 1.0:
             raise ValueError("annual_rent_growth_rate must be greater than -1 and no more than 1.")
+        if not -1.0 < self.retirement_return_autocorrelation < 1.0:
+            raise ValueError("retirement_return_autocorrelation must be between -1 and 1.")
         if self.annual_home_insurance_cents < 0:
             raise ValueError("Annual home insurance must be non-negative.")
 
@@ -402,7 +405,7 @@ class RetirementYearProjectionRow:
     median_portfolio_cents: int
     p10_portfolio_cents: int
     p90_portfolio_cents: int
-    depletion_probability: float
+    cumulative_depletion_probability: float
 
 
 @dataclass(frozen=True)
@@ -421,8 +424,8 @@ class RetirementMonteCarloSummary:
     median_terminal_wealth_cents: int
     p10_terminal_wealth_cents: int
     p90_terminal_wealth_cents: int
-    median_depletion_year: int | None
-    yearly_rows: list[RetirementYearProjectionRow]
+    conditional_median_depletion_year: int | None
+    yearly_rows: tuple[RetirementYearProjectionRow, ...]
 
 
 @dataclass(frozen=True)
@@ -430,7 +433,7 @@ class RetirementSurvivalAnalysis:
     deterministic: RetirementDeterministicSummary
     monte_carlo: RetirementMonteCarloSummary
     audit_trail: list[AssumptionAuditItem]
-    warnings: list[str] = field(default_factory=list)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

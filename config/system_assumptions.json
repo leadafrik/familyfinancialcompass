@@ -7,6 +7,7 @@
   "maintenance_rate": 0.01,
   "selling_cost_rate": 0.07,
   "annual_pmi_rate": 0.01,
+  "retirement_return_autocorrelation": 0.15,
   "buyer_closing_cost_rate": 0.03,
   "monte_carlo": {
     "scenario_count": 10000,

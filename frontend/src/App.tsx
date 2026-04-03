@@ -1253,7 +1253,7 @@ function RetirementProjectionTableRow({ row }: { row: RetirementYearProjectionRo
       <td>{formatCurrency(row.median_portfolio_cents)}</td>
       <td>{formatCurrency(row.p10_portfolio_cents)}</td>
       <td>{formatCurrency(row.p90_portfolio_cents)}</td>
-      <td>{formatPercent(row.depletion_probability)}</td>
+      <td>{formatPercent(row.cumulative_depletion_probability)}</td>
     </tr>
   );
 }

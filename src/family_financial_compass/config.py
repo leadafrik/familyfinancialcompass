@@ -118,6 +118,7 @@ DEFAULT_SYSTEM_ASSUMPTIONS = SystemAssumptions(
     annual_pmi_rate=0.01,
     monte_carlo=DEFAULT_MONTE_CARLO,
     behavioral=DEFAULT_BEHAVIORAL_ADJUSTMENTS,
+    retirement_return_autocorrelation=0.15,
     buyer_closing_cost_rate=0.03,
 )
 
@@ -258,6 +259,12 @@ def assumption_bundle_from_payload(payload: dict) -> AssumptionBundle:
             stable_income_liquidity_premium=float(behavioral_payload["stable_income_liquidity_premium"]),
             variable_income_liquidity_premium=float(behavioral_payload["variable_income_liquidity_premium"]),
         ),
+        retirement_return_autocorrelation=float(
+            payload.get(
+                "retirement_return_autocorrelation",
+                DEFAULT_SYSTEM_ASSUMPTIONS.retirement_return_autocorrelation,
+            )
+        ),
         buyer_closing_cost_rate=float(payload.get("buyer_closing_cost_rate", DEFAULT_SYSTEM_ASSUMPTIONS.buyer_closing_cost_rate)),
     )
     audit_payload = payload.get("audit_trail")
@@ -278,6 +285,7 @@ def assumption_bundle_to_payload(bundle: AssumptionBundle) -> dict:
         "maintenance_rate": assumptions.maintenance_rate,
         "selling_cost_rate": assumptions.selling_cost_rate,
         "annual_pmi_rate": assumptions.annual_pmi_rate,
+        "retirement_return_autocorrelation": assumptions.retirement_return_autocorrelation,
         "buyer_closing_cost_rate": assumptions.buyer_closing_cost_rate,
         "monte_carlo": {
             "scenario_count": monte_carlo.scenario_count,

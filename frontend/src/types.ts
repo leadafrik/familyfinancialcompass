@@ -145,7 +145,7 @@ export interface RetirementYearProjectionRow {
   median_portfolio_cents: number;
   p10_portfolio_cents: number;
   p90_portfolio_cents: number;
-  depletion_probability: number;
+  cumulative_depletion_probability: number;
 }
 
 export interface RetirementDeterministicSummary {
@@ -162,7 +162,7 @@ export interface RetirementMonteCarloSummary {
   median_terminal_wealth_cents: number;
   p10_terminal_wealth_cents: number;
   p90_terminal_wealth_cents: number;
-  median_depletion_year: number | null;
+  conditional_median_depletion_year: number | null;
   yearly_rows: RetirementYearProjectionRow[];
 }
 

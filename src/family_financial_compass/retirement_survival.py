@@ -13,7 +13,6 @@ from .models import (
     SystemAssumptions,
 )
 
-_RETURN_AUTOCORRELATION = 0.15
 _SAFE_WITHDRAWAL_TARGET = 0.95
 
 
@@ -39,7 +38,7 @@ class RetirementSurvivalEngine:
             ),
             monte_carlo=monte_carlo,
             audit_trail=audit_trail or self._build_audit_trail(user_inputs),
-            warnings=warnings,
+            warnings=tuple(warnings),
         )
 
     def _effective_expected_return(self, user_inputs: RetirementScenarioInput) -> float:
@@ -80,11 +79,12 @@ class RetirementSurvivalEngine:
         innovations = rng.normal(size=(scenario_count, horizon))
         returns = np.empty((scenario_count, horizon), dtype=np.float64)
         returns[:, 0] = mean_return + volatility * innovations[:, 0]
-        scaled_volatility = volatility * np.sqrt(max(1.0 - (_RETURN_AUTOCORRELATION ** 2), 0.0))
+        autocorrelation = self.assumptions.retirement_return_autocorrelation
+        scaled_volatility = volatility * np.sqrt(max(1.0 - (autocorrelation ** 2), 0.0))
         for year in range(1, horizon):
             returns[:, year] = (
                 mean_return
-                + _RETURN_AUTOCORRELATION * (returns[:, year - 1] - mean_return)
+                + autocorrelation * (returns[:, year - 1] - mean_return)
                 + scaled_volatility * innovations[:, year]
             )
         returns = np.clip(returns, -0.95, 1.50)
@@ -105,7 +105,7 @@ class RetirementSurvivalEngine:
 
     def _safe_withdrawal_rate(self, user_inputs: RetirementScenarioInput, seed: int) -> float:
         low = 0.0
-        high = max(user_inputs.current_withdrawal_rate * 1.75, 0.12)
+        high = max(user_inputs.current_withdrawal_rate * 2.0, 0.20)
         for _ in range(18):
             midpoint = (low + high) / 2.0
             withdrawal_cents = int(round(user_inputs.current_portfolio_cents * midpoint))
@@ -115,6 +115,8 @@ class RetirementSurvivalEngine:
                 low = midpoint
             else:
                 high = midpoint
+        if low < 1e-6:
+            return 0.0
         return low
 
     def _run_monte_carlo(
@@ -128,22 +130,22 @@ class RetirementSurvivalEngine:
         depletion_mask = paths <= 0
         depleted_any = np.any(depletion_mask, axis=1)
         depletion_years = np.where(depleted_any, np.argmax(depletion_mask, axis=1) + 1, 0)
-        median_depletion_year = (
+        conditional_median_depletion_year = (
             int(np.median(depletion_years[depleted_any]))
             if np.any(depleted_any)
             else None
         )
-        yearly_rows = [
+        yearly_rows = tuple(
             RetirementYearProjectionRow(
                 year=year + 1,
                 deterministic_portfolio_cents=int(deterministic_path[year]),
                 median_portfolio_cents=int(np.percentile(paths[:, year], 50)),
                 p10_portfolio_cents=int(np.percentile(paths[:, year], 10)),
                 p90_portfolio_cents=int(np.percentile(paths[:, year], 90)),
-                depletion_probability=float(np.mean(paths[:, year] <= 0)),
+                cumulative_depletion_probability=float(np.mean(paths[:, year] <= 0)),
             )
             for year in range(user_inputs.retirement_years)
-        ]
+        )
         return RetirementMonteCarloSummary(
             scenario_count=self.assumptions.monte_carlo.scenario_count,
             probability_portfolio_survives=float(np.mean(terminal > 0)),
@@ -151,7 +153,7 @@ class RetirementSurvivalEngine:
             median_terminal_wealth_cents=int(np.percentile(terminal, 50)),
             p10_terminal_wealth_cents=int(np.percentile(terminal, 10)),
             p90_terminal_wealth_cents=int(np.percentile(terminal, 90)),
-            median_depletion_year=median_depletion_year,
+            conditional_median_depletion_year=conditional_median_depletion_year,
             yearly_rows=yearly_rows,
         )
 
@@ -172,7 +174,7 @@ class RetirementSurvivalEngine:
             AssumptionAuditItem(
                 name="Return autocorrelation",
                 parameter="retirement_return_autocorrelation",
-                value=round(_RETURN_AUTOCORRELATION, 2),
+                value=round(self.assumptions.retirement_return_autocorrelation, 2),
                 source="Retirement simulation calibration",
             ),
         ]
@@ -191,7 +193,7 @@ class RetirementSurvivalEngine:
         self,
         user_inputs: RetirementScenarioInput,
         monte_carlo: RetirementMonteCarloSummary,
-    ) -> list[str]:
+    ) -> tuple[str, ...]:
         warnings: list[str] = []
         if monte_carlo.probability_portfolio_survives < 0.75:
             warnings.append(
@@ -205,4 +207,4 @@ class RetirementSurvivalEngine:
             warnings.append(
                 "Expected returns were reduced to reflect likely selling after a severe market drawdown."
             )
-        return warnings
+        return tuple(warnings)

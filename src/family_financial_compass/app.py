@@ -74,21 +74,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.state.service = service
     app.state.settings = app_settings
 
+    def _process_health_payload() -> HealthEnvelope:
+        return HealthEnvelope(
+            status="ok",
+            model_version=service.model_version,
+            scenario_store=repository.storage_target,
+            assumptions_path=str(app_settings.assumptions_path),
+        )
+
     @app.exception_handler(ValueError)
     async def handle_value_error(_, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.get("/healthz", response_model=HealthEnvelope)
     async def healthz() -> HealthEnvelope:
-        current = service.current_assumptions_payload()
-        return HealthEnvelope(
-            status="ok",
-            model_version=service.model_version,
-            scenario_store=repository.storage_target,
-            assumptions_path=str(app_settings.assumptions_path),
-            assumptions_source=current["source"],
-            assumptions_cache_date=current["cache_date"],
-        )
+        return _process_health_payload()
 
     @app.get("/readyz", response_model=HealthEnvelope)
     async def readyz() -> HealthEnvelope:
@@ -111,12 +111,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @app.get("/livez", response_model=HealthEnvelope)
     async def livez() -> HealthEnvelope:
-        return HealthEnvelope(
-            status="ok",
-            model_version=service.model_version,
-            scenario_store=repository.storage_target,
-            assumptions_path=str(app_settings.assumptions_path),
-        )
+        return _process_health_payload()
 
     @app.get("/v1/rent-vs-buy/assumptions/current", response_model=CurrentAssumptionsEnvelope)
     async def current_rent_vs_buy_assumptions() -> CurrentAssumptionsEnvelope:
