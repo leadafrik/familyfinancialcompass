@@ -36,6 +36,19 @@ export interface RetirementInputPayload {
   loss_behavior: LossBehavior;
 }
 
+export interface CollegeVsRetirementInputPayload {
+  current_retirement_savings_cents: number;
+  current_college_savings_cents: number;
+  annual_savings_budget_cents: number;
+  annual_college_cost_cents: number;
+  years_until_college: number;
+  years_in_college: number;
+  retirement_years: number;
+  expected_annual_return_rate: number;
+  risk_profile: RiskProfile;
+  loss_behavior: LossBehavior;
+}
+
 export interface JobOfferOfferPayload {
   label: string;
   base_salary_cents: number;
@@ -221,7 +234,7 @@ export interface JobOfferMonteCarloSummary {
   scenario_count: number;
   probability_offer_b_wins: number;
   probability_break_even_within_horizon: number;
-  median_break_even_month: number | null;
+  conditional_median_break_even_month: number | null;
   median_terminal_advantage_cents: number;
   p10_terminal_advantage_cents: number;
   p90_terminal_advantage_cents: number;
@@ -239,6 +252,55 @@ export interface JobOfferAnalysisEnvelope {
   model_version: string;
   disclaimer: string;
   analysis: JobOfferAnalysis;
+}
+
+export interface CollegeVsRetirementYearComparisonRow {
+  year: number;
+  college_first_net_worth_cents: number;
+  retirement_first_net_worth_cents: number;
+  retirement_first_minus_college_first_cents: number;
+  college_first_retirement_cents: number;
+  retirement_first_retirement_cents: number;
+  college_first_college_fund_cents: number;
+  retirement_first_college_fund_cents: number;
+  college_first_loan_balance_cents: number;
+  retirement_first_loan_balance_cents: number;
+}
+
+export interface CollegeVsRetirementDeterministicSummary {
+  break_even_year: number | null;
+  end_of_horizon_advantage_cents: number;
+  college_first_terminal_retirement_cents: number;
+  retirement_first_terminal_retirement_cents: number;
+  college_first_total_loan_cents: number;
+  retirement_first_total_loan_cents: number;
+  yearly_rows: CollegeVsRetirementYearComparisonRow[];
+}
+
+export interface CollegeVsRetirementMonteCarloSummary {
+  scenario_count: number;
+  probability_retirement_first_wins: number;
+  probability_break_even_within_horizon: number;
+  conditional_median_break_even_year: number | null;
+  median_terminal_advantage_cents: number;
+  p10_terminal_advantage_cents: number;
+  p90_terminal_advantage_cents: number;
+  median_retirement_first_terminal_retirement_cents: number;
+  median_college_first_terminal_retirement_cents: number;
+  utility_adjusted_p50_advantage_cents: number;
+}
+
+export interface CollegeVsRetirementAnalysis {
+  deterministic: CollegeVsRetirementDeterministicSummary;
+  monte_carlo: CollegeVsRetirementMonteCarloSummary;
+  audit_trail: AuditTrailItem[];
+  warnings: string[];
+}
+
+export interface CollegeVsRetirementAnalysisEnvelope {
+  model_version: string;
+  disclaimer: string;
+  analysis: CollegeVsRetirementAnalysis;
 }
 
 export interface ReportInputsSummaryRow {
@@ -470,4 +532,17 @@ export interface JobOfferFormState {
   comparisonYears: string;
   marginalTaxRate: string;
   localMarketConcentration: boolean;
+}
+
+export interface CollegeVsRetirementFormState {
+  currentRetirementSavings: string;
+  currentCollegeSavings: string;
+  annualSavingsBudget: string;
+  annualCollegeCost: string;
+  yearsUntilCollege: string;
+  yearsInCollege: string;
+  retirementYears: string;
+  expectedAnnualReturn: string;
+  riskProfile: RiskProfile;
+  lossBehavior: LossBehavior;
 }

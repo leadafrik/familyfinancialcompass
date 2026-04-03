@@ -8,6 +8,11 @@
   "selling_cost_rate": 0.07,
   "annual_pmi_rate": 0.01,
   "retirement_return_autocorrelation": 0.15,
+  "job_offer_bonus_market_beta": 0.2,
+  "job_offer_equity_market_beta": 0.35,
+  "college_tuition_inflation_rate": 0.05,
+  "college_student_loan_rate": 0.065,
+  "college_student_loan_term_years": 10,
   "buyer_closing_cost_rate": 0.03,
   "monte_carlo": {
     "scenario_count": 10000,

@@ -2,6 +2,7 @@ import { startTransition, useEffect, useState } from "react";
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
 
 import {
+  analyzeCollegeVsRetirement,
   analyzeJobOffer,
   analyzeRetirementSurvival,
   analyzeRentVsBuy,
@@ -15,6 +16,11 @@ import type {
   AuditTrailItem,
   AssumptionFormState,
   AssumptionOverridesPayload,
+  CollegeVsRetirementAnalysis,
+  CollegeVsRetirementAnalysisEnvelope,
+  CollegeVsRetirementFormState,
+  CollegeVsRetirementInputPayload,
+  CollegeVsRetirementYearComparisonRow,
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   FormState,
@@ -70,8 +76,8 @@ const modules: Array<{
   {
     id: "college-vs-retirement",
     label: "College vs Retirement",
-    status: "queued",
-    description: "Aid-aware asset tradeoffs and retirement opportunity cost.",
+    status: "live",
+    description: "Direct the family savings budget toward tuition prep or retirement compounding.",
   },
   {
     id: "debt-payoff-vs-invest",
@@ -120,6 +126,19 @@ const defaultRetirementFormState: RetirementFormState = {
   annualSpending: "80000",
   annualGuaranteedIncome: "20000",
   retirementYears: "30",
+  expectedAnnualReturn: "6.0",
+  riskProfile: "moderate",
+  lossBehavior: "hold",
+};
+
+const defaultCollegeVsRetirementFormState: CollegeVsRetirementFormState = {
+  currentRetirementSavings: "400000",
+  currentCollegeSavings: "20000",
+  annualSavingsBudget: "18000",
+  annualCollegeCost: "35000",
+  yearsUntilCollege: "8",
+  yearsInCollege: "4",
+  retirementYears: "18",
   expectedAnnualReturn: "6.0",
   riskProfile: "moderate",
   lossBehavior: "hold",
@@ -232,6 +251,23 @@ function buildRetirementPayload(form: RetirementFormState): RetirementInputPaylo
     current_portfolio_cents: dollarsToCents(form.currentPortfolio),
     annual_spending_cents: dollarsToCents(form.annualSpending),
     annual_guaranteed_income_cents: dollarsToCents(form.annualGuaranteedIncome),
+    retirement_years: Number(form.retirementYears),
+    expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
+    risk_profile: form.riskProfile,
+    loss_behavior: form.lossBehavior,
+  };
+}
+
+function buildCollegeVsRetirementPayload(
+  form: CollegeVsRetirementFormState,
+): CollegeVsRetirementInputPayload {
+  return {
+    current_retirement_savings_cents: dollarsToCents(form.currentRetirementSavings),
+    current_college_savings_cents: dollarsToCents(form.currentCollegeSavings),
+    annual_savings_budget_cents: dollarsToCents(form.annualSavingsBudget),
+    annual_college_cost_cents: dollarsToCents(form.annualCollegeCost),
+    years_until_college: Number(form.yearsUntilCollege),
+    years_in_college: Number(form.yearsInCollege),
     retirement_years: Number(form.retirementYears),
     expected_annual_return_rate: percentToRate(form.expectedAnnualReturn),
     risk_profile: form.riskProfile,
@@ -533,6 +569,8 @@ function App() {
   const [retirementForm, setRetirementForm] = useState<RetirementFormState>(
     defaultRetirementFormState,
   );
+  const [collegeVsRetirementForm, setCollegeVsRetirementForm] =
+    useState<CollegeVsRetirementFormState>(defaultCollegeVsRetirementFormState);
   const [jobOfferForm, setJobOfferForm] = useState<JobOfferFormState>(defaultJobOfferFormState);
   const [assumptionForm, setAssumptionForm] = useState<AssumptionFormState>(defaultAssumptionFormState);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -541,6 +579,8 @@ function App() {
   const [analysisEnvelope, setAnalysisEnvelope] = useState<AnalysisEnvelope | null>(null);
   const [retirementAnalysisEnvelope, setRetirementAnalysisEnvelope] =
     useState<RetirementAnalysisEnvelope | null>(null);
+  const [collegeVsRetirementAnalysisEnvelope, setCollegeVsRetirementAnalysisEnvelope] =
+    useState<CollegeVsRetirementAnalysisEnvelope | null>(null);
   const [jobOfferAnalysisEnvelope, setJobOfferAnalysisEnvelope] =
     useState<JobOfferAnalysisEnvelope | null>(null);
   const [currentAssumptions, setCurrentAssumptions] = useState<CurrentAssumptionsEnvelope | null>(null);
@@ -606,6 +646,8 @@ function App() {
     scenarioToBaseline(selectedScenario) ?? currentAssumptionsToBaseline(currentAssumptions);
   const activeAnalysis = selectedScenario?.analysis ?? analysisEnvelope?.analysis ?? null;
   const activeRetirementAnalysis = retirementAnalysisEnvelope?.analysis ?? null;
+  const activeCollegeVsRetirementAnalysis =
+    collegeVsRetirementAnalysisEnvelope?.analysis ?? null;
   const activeJobOfferAnalysis = jobOfferAnalysisEnvelope?.analysis ?? null;
   const activeModelVersion =
     selectedScenario?.model_version ?? analysisEnvelope?.model_version ?? null;
@@ -641,6 +683,23 @@ function App() {
         simulation_seed: 7,
       });
       startTransition(() => setRetirementAnalysisEnvelope(response));
+    } catch (e: unknown) {
+      setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  async function handleCollegeVsRetirementAnalyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAnalysisError(null);
+    setIsAnalyzing(true);
+    try {
+      const response = await analyzeCollegeVsRetirement({
+        input: buildCollegeVsRetirementPayload(collegeVsRetirementForm),
+        simulation_seed: 7,
+      });
+      startTransition(() => setCollegeVsRetirementAnalysisEnvelope(response));
     } catch (e: unknown) {
       setAnalysisError(e instanceof Error ? e.message : "Analysis failed.");
     } finally {
@@ -1125,6 +1184,16 @@ function App() {
             analysisError={analysisError}
             onAnalyze={handleRetirementAnalyze}
           />
+        ) : activeModule === "college-vs-retirement" ? (
+          <CollegeVsRetirementLayout
+            form={collegeVsRetirementForm}
+            setForm={setCollegeVsRetirementForm}
+            analysis={activeCollegeVsRetirementAnalysis}
+            modelVersion={collegeVsRetirementAnalysisEnvelope?.model_version ?? null}
+            isAnalyzing={isAnalyzing}
+            analysisError={analysisError}
+            onAnalyze={handleCollegeVsRetirementAnalyze}
+          />
         ) : activeModule === "job-offer" ? (
           <JobOfferLayout
             form={jobOfferForm}
@@ -1357,6 +1426,254 @@ function RetirementProjectionTableRow({ row }: { row: RetirementYearProjectionRo
   );
 }
 
+function CollegeVsRetirementLayout({
+  form,
+  setForm,
+  analysis,
+  modelVersion,
+  isAnalyzing,
+  analysisError,
+  onAnalyze,
+}: {
+  form: CollegeVsRetirementFormState;
+  setForm: Dispatch<SetStateAction<CollegeVsRetirementFormState>>;
+  analysis: CollegeVsRetirementAnalysis | null;
+  modelVersion: string | null;
+  isAnalyzing: boolean;
+  analysisError: string | null;
+  onAnalyze: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+}) {
+  return (
+    <div className="rent-layout">
+      <section className="panel">
+        <div className="panel__header">
+          <div>
+            <span className="panel__eyebrow">Inputs</span>
+            <h3>Family savings tradeoff</h3>
+          </div>
+          <p>One choice only: send the marginal savings budget toward college now, or keep it compounding for retirement.</p>
+        </div>
+
+        <form className="form-grid" onSubmit={onAnalyze}>
+          <p className="form-section-label">Balances</p>
+          <div className="form-two-col">
+            <NumField label="Retirement savings" name="currentRetirementSavings" value={form.currentRetirementSavings} onChange={setForm} suffix="USD" />
+            <NumField label="College savings" name="currentCollegeSavings" value={form.currentCollegeSavings} onChange={setForm} suffix="USD" />
+          </div>
+
+          <p className="form-section-label">Family timeline</p>
+          <div className="form-two-col">
+            <NumField label="Annual savings budget" name="annualSavingsBudget" value={form.annualSavingsBudget} onChange={setForm} suffix="USD" />
+            <NumField label="Annual college cost today" name="annualCollegeCost" value={form.annualCollegeCost} onChange={setForm} suffix="USD" />
+          </div>
+          <div className="form-two-col">
+            <NumField label="Years until college" name="yearsUntilCollege" value={form.yearsUntilCollege} onChange={setForm} suffix="yrs" />
+            <NumField label="Years in college" name="yearsInCollege" value={form.yearsInCollege} onChange={setForm} suffix="yrs" />
+          </div>
+          <div className="form-two-col">
+            <NumField label="Years until retirement" name="retirementYears" value={form.retirementYears} onChange={setForm} suffix="yrs" />
+            <NumField label="Expected return" name="expectedAnnualReturn" value={form.expectedAnnualReturn} onChange={setForm} suffix="%/yr" step={0.1} />
+          </div>
+          <div className="form-two-col">
+            <SelectField
+              label="Risk tolerance"
+              value={form.riskProfile}
+              onChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  riskProfile: value as CollegeVsRetirementFormState["riskProfile"],
+                }))
+              }
+              options={[
+                { value: "conservative", label: "Conservative" },
+                { value: "moderate", label: "Moderate" },
+                { value: "aggressive", label: "Aggressive" },
+              ]}
+            />
+            <SelectField
+              label="If markets crash"
+              value={form.lossBehavior}
+              onChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  lossBehavior: value as CollegeVsRetirementFormState["lossBehavior"],
+                }))
+              }
+              options={[
+                { value: "hold", label: "Hold steady" },
+                { value: "sell_to_cash", label: "Sell to cash" },
+                { value: "buy_more", label: "Buy more" },
+              ]}
+            />
+          </div>
+
+          <div className="form-actions">
+            <button type="submit" className="button button--primary" disabled={isAnalyzing} style={{ flex: 1 }}>
+              {isAnalyzing ? "Running family-finance simulation…" : "Run analysis"}
+            </button>
+          </div>
+          {analysisError && <p className="message message--error">{analysisError}</p>}
+        </form>
+      </section>
+
+      <section className={`panel${analysis === null ? " panel--placeholder" : ""}`}>
+        {analysis === null ? (
+          <EmptyOutput loading={isAnalyzing} />
+        ) : (
+          <CollegeVsRetirementOutputPanel analysis={analysis} modelVersion={modelVersion} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CollegeVsRetirementOutputPanel({
+  analysis,
+  modelVersion,
+}: {
+  analysis: CollegeVsRetirementAnalysis;
+  modelVersion: string | null;
+}) {
+  const det = analysis.deterministic;
+  const mc = analysis.monte_carlo;
+  const retirementFirstWins = mc.probability_retirement_first_wins >= 0.55;
+  const collegeFirstWins = mc.probability_retirement_first_wins <= 0.45;
+  const verdictLabel = retirementFirstWins
+    ? "Retirement-first is stronger"
+    : collegeFirstWins
+      ? "College-first is stronger"
+      : "This is a close call";
+  const headline = retirementFirstWins
+    ? `Retirement-first wins ${formatPercent(mc.probability_retirement_first_wins)} of simulated paths.`
+    : collegeFirstWins
+      ? `College-first wins ${formatPercent(1 - mc.probability_retirement_first_wins)} of simulated paths.`
+      : `Neither strategy separates cleanly across the simulated paths.`;
+
+  return (
+    <div>
+      <div className="panel__header" style={{ marginBottom: "1.2rem" }}>
+        <div>
+          <span className="panel__eyebrow">Output</span>
+          <h3 style={{ fontFamily: "'Iowan Old Style', 'Palatino Linotype', Georgia, serif", fontSize: "1.8rem", marginTop: "0.35rem" }}>
+            College vs retirement
+          </h3>
+        </div>
+        {modelVersion && <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>v{modelVersion}</span>}
+      </div>
+
+      <div
+        className="verdict-card"
+        style={{
+          background: retirementFirstWins ? "rgba(36, 71, 55, 0.06)" : collegeFirstWins ? "rgba(140, 47, 61, 0.06)" : "var(--surface-soft)",
+          border: retirementFirstWins ? "1px solid rgba(36, 71, 55, 0.18)" : collegeFirstWins ? "1px solid rgba(140, 47, 61, 0.18)" : "1px solid rgba(23, 34, 29, 0.12)",
+        }}
+      >
+        <p className="verdict-card__eyebrow" style={{ color: retirementFirstWins ? "var(--accent)" : collegeFirstWins ? "var(--danger)" : "var(--muted)" }}>
+          {verdictLabel}
+        </p>
+        <p className="verdict-card__headline" style={{ fontSize: "clamp(1.25rem, 2.4vw, 1.8rem)" }}>
+          {headline}
+        </p>
+        <p className="verdict-card__sub">
+          {det.break_even_year !== null
+            ? `Retirement-first overtakes college-first by year ${det.break_even_year}.`
+            : "Retirement-first never overtakes college-first inside the selected horizon."}
+          {mc.conditional_median_break_even_year !== null
+            ? ` Across winning simulations, median break-even is year ${mc.conditional_median_break_even_year}.`
+            : ""}
+        </p>
+      </div>
+
+      <div className="summary-grid output-section">
+        <div className="summary-card">
+          <span>Retirement-first wins</span>
+          <strong>{formatPercent(mc.probability_retirement_first_wins)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Median advantage</span>
+          <strong style={{ color: mc.median_terminal_advantage_cents >= 0 ? "var(--accent)" : "var(--danger)" }}>
+            {formatCurrency(mc.median_terminal_advantage_cents)}
+          </strong>
+        </div>
+        <div className="summary-card">
+          <span>Median retirement-first nest egg</span>
+          <strong>{formatCurrency(mc.median_retirement_first_terminal_retirement_cents)}</strong>
+        </div>
+        <div className="summary-card">
+          <span>Median college-first nest egg</span>
+          <strong>{formatCurrency(mc.median_college_first_terminal_retirement_cents)}</strong>
+        </div>
+      </div>
+
+      <div className="detail-card output-section">
+        <h4>Loan pressure and end-state retirement capital</h4>
+        <div className="result-row">
+          <span style={{ color: "var(--muted)" }}>College-first max loan need</span>
+          <span>{formatCurrency(det.college_first_total_loan_cents)}</span>
+        </div>
+        <div className="result-row">
+          <span style={{ color: "var(--muted)" }}>Retirement-first max loan need</span>
+          <span>{formatCurrency(det.retirement_first_total_loan_cents)}</span>
+        </div>
+        <div className="result-row">
+          <span style={{ color: "var(--muted)" }}>College-first retirement balance at horizon</span>
+          <span>{formatCurrency(det.college_first_terminal_retirement_cents)}</span>
+        </div>
+        <div className="result-row result-row--total">
+          <span>Retirement-first retirement balance at horizon</span>
+          <span>{formatCurrency(det.retirement_first_terminal_retirement_cents)}</span>
+        </div>
+      </div>
+
+      <div className="detail-card output-section">
+        <h4>Household net worth by year</h4>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Yr</th>
+                <th>College-first</th>
+                <th>Retirement-first</th>
+                <th>Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {det.yearly_rows.map((row) => (
+                <CollegeVsRetirementYearRow key={row.year} row={row} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {analysis.warnings.length > 0 && (
+        <div className="notice output-section">
+          {analysis.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CollegeVsRetirementYearRow({
+  row,
+}: {
+  row: CollegeVsRetirementYearComparisonRow;
+}) {
+  return (
+    <tr>
+      <td>{row.year}</td>
+      <td>{formatCurrency(row.college_first_net_worth_cents)}</td>
+      <td>{formatCurrency(row.retirement_first_net_worth_cents)}</td>
+      <td style={{ color: row.retirement_first_minus_college_first_cents >= 0 ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>
+        {formatCurrency(row.retirement_first_minus_college_first_cents)}
+      </td>
+    </tr>
+  );
+}
+
 function JobOfferLayout({
   form,
   setForm,
@@ -1564,8 +1881,8 @@ function JobOfferOutputPanel({
           {det.break_even_month !== null
             ? `${offerBLabel} recovers its upfront friction by month ${det.break_even_month}.`
             : `${offerBLabel} does not recover its upfront friction inside the selected horizon.`}
-          {mc.median_break_even_month !== null
-            ? ` Across simulations, median break-even is month ${mc.median_break_even_month}.`
+          {mc.conditional_median_break_even_month !== null
+            ? ` Across simulations, median break-even is month ${mc.conditional_median_break_even_month}.`
             : ""}
         </p>
       </div>
@@ -1950,7 +2267,8 @@ function YearRow({ row }: { row: YearlyComparisonRow }) {
 
 type NumericFieldName =
   | keyof FormState
-  | keyof RetirementFormState;
+  | keyof RetirementFormState
+  | keyof CollegeVsRetirementFormState;
 
 function NumField({
   label,
@@ -1963,7 +2281,10 @@ function NumField({
   label: string;
   name: NumericFieldName;
   value: string;
-  onChange: Dispatch<SetStateAction<FormState>> | Dispatch<SetStateAction<RetirementFormState>>;
+  onChange:
+    | Dispatch<SetStateAction<FormState>>
+    | Dispatch<SetStateAction<RetirementFormState>>
+    | Dispatch<SetStateAction<CollegeVsRetirementFormState>>;
   suffix?: string;
   step?: number;
 }) {

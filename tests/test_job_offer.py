@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -78,16 +79,12 @@ def test_job_offer_new_role_outperforms_baseline() -> None:
 
 def test_job_offer_relocation_cost_delays_break_even() -> None:
     engine = JobOfferEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
-    base_analysis = engine.analyze(_base_input(), seed=7)
+    base_input = _base_input()
+    base_analysis = engine.analyze(base_input, seed=7)
     stressed_analysis = engine.analyze(
         JobOfferScenarioInput(
-            offer_a=_base_input().offer_a,
-            offer_b=JobOffer(
-                **{
-                    **_base_input().offer_b.__dict__,
-                    "relocation_cost_cents": dollars_to_cents(60_000),
-                }
-            ),
+            offer_a=base_input.offer_a,
+            offer_b=replace(base_input.offer_b, relocation_cost_cents=dollars_to_cents(60_000)),
             comparison_years=4,
             marginal_tax_rate=0.30,
             local_market_concentration=True,
@@ -102,22 +99,18 @@ def test_job_offer_relocation_cost_delays_break_even() -> None:
 
 def test_job_offer_equity_volatility_widens_terminal_distribution() -> None:
     engine = JobOfferEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    base_input = _base_input()
     low_vol_analysis = engine.analyze(
         JobOfferScenarioInput(
-            offer_a=_base_input().offer_a,
-            offer_b=JobOffer(
-                **{
-                    **_base_input().offer_b.__dict__,
-                    "equity_volatility": 0.20,
-                }
-            ),
+            offer_a=base_input.offer_a,
+            offer_b=replace(base_input.offer_b, equity_volatility=0.20),
             comparison_years=4,
             marginal_tax_rate=0.30,
             local_market_concentration=False,
         ),
         seed=7,
     )
-    high_vol_analysis = engine.analyze(_base_input(), seed=7)
+    high_vol_analysis = engine.analyze(base_input, seed=7)
 
     low_spread = (
         low_vol_analysis.monte_carlo.p90_terminal_advantage_cents
@@ -131,6 +124,27 @@ def test_job_offer_equity_volatility_widens_terminal_distribution() -> None:
     assert high_spread > low_spread
 
 
+def test_job_offer_cheaper_city_improves_advantage() -> None:
+    engine = JobOfferEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
+    base_input = _base_input()
+    baseline = engine.analyze(base_input, seed=7)
+    cheaper_city = engine.analyze(
+        JobOfferScenarioInput(
+            offer_a=base_input.offer_a,
+            offer_b=replace(
+                base_input.offer_b,
+                annual_cost_of_living_delta_cents=-dollars_to_cents(12_000),
+            ),
+            comparison_years=base_input.comparison_years,
+            marginal_tax_rate=base_input.marginal_tax_rate,
+            local_market_concentration=base_input.local_market_concentration,
+        ),
+        seed=7,
+    )
+
+    assert cheaper_city.deterministic.end_of_horizon_advantage_cents > baseline.deterministic.end_of_horizon_advantage_cents
+
+
 def test_job_offer_seeded_numeric_regression() -> None:
     engine = JobOfferEngine(DEFAULT_SYSTEM_ASSUMPTIONS)
     analysis = engine.analyze(_base_input(), seed=7)
@@ -139,9 +153,9 @@ def test_job_offer_seeded_numeric_regression() -> None:
     assert analysis.deterministic.break_even_month == 1
     assert analysis.deterministic.end_of_horizon_advantage_cents == pytest.approx(11_096_421, abs=100_000)
     assert monte_carlo.probability_offer_b_wins == pytest.approx(1.0, abs=0.0)
-    assert monte_carlo.median_terminal_advantage_cents == pytest.approx(11_177_342, abs=150_000)
-    assert monte_carlo.p10_terminal_advantage_cents == pytest.approx(7_803_386, abs=250_000)
-    assert monte_carlo.p90_terminal_advantage_cents == pytest.approx(14_808_368, abs=250_000)
+    assert monte_carlo.median_terminal_advantage_cents == pytest.approx(11_151_330, abs=150_000)
+    assert monte_carlo.p10_terminal_advantage_cents == pytest.approx(7_843_106, abs=250_000)
+    assert monte_carlo.p90_terminal_advantage_cents == pytest.approx(14_715_329, abs=250_000)
 
 
 def test_job_offer_api_endpoint_is_available() -> None:

@@ -10,6 +10,7 @@ from .assumptions import FileAssumptionStore, PostgresAssumptionStore
 from .api_models import (
     AnalysisEnvelope,
     AnalyzeRequest,
+    CollegeVsRetirementAnalyzeRequest,
     CreateScenarioRequest,
     CurrentAssumptionsEnvelope,
     HealthEnvelope,
@@ -142,6 +143,16 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     @app.post("/v1/job-offer/analyze", response_model=AnalysisEnvelope)
     async def analyze_job_offer(request: JobOfferAnalyzeRequest) -> AnalysisEnvelope:
         payload = service.analyze_job_offer_payload(
+            request.input.to_domain(),
+            seed=request.simulation_seed,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return AnalysisEnvelope(**payload)
+
+    @app.post("/v1/college-vs-retirement/analyze", response_model=AnalysisEnvelope)
+    async def analyze_college_vs_retirement(request: CollegeVsRetirementAnalyzeRequest) -> AnalysisEnvelope:
+        payload = service.analyze_college_vs_retirement_payload(
             request.input.to_domain(),
             seed=request.simulation_seed,
             assumptions_snapshot=request.assumptions_snapshot,

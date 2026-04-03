@@ -1,6 +1,8 @@
 import type {
   AnalysisEnvelope,
   AnalyzeRequestPayload,
+  CollegeVsRetirementAnalysisEnvelope,
+  CollegeVsRetirementInputPayload,
   CurrentAssumptionsEnvelope,
   CreateScenarioPayload,
   JobOfferAnalysisEnvelope,
@@ -45,6 +47,16 @@ export function analyzeRetirementSurvival(payload: {
   simulation_seed: number;
 }): Promise<RetirementAnalysisEnvelope> {
   return request<RetirementAnalysisEnvelope>("/v1/retirement-survival/analyze", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function analyzeCollegeVsRetirement(payload: {
+  input: CollegeVsRetirementInputPayload;
+  simulation_seed: number;
+}): Promise<CollegeVsRetirementAnalysisEnvelope> {
+  return request<CollegeVsRetirementAnalysisEnvelope>("/v1/college-vs-retirement/analyze", {
     method: "POST",
     body: JSON.stringify(payload),
   });

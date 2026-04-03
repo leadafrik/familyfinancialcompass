@@ -119,6 +119,11 @@ DEFAULT_SYSTEM_ASSUMPTIONS = SystemAssumptions(
     monte_carlo=DEFAULT_MONTE_CARLO,
     behavioral=DEFAULT_BEHAVIORAL_ADJUSTMENTS,
     retirement_return_autocorrelation=0.15,
+    job_offer_bonus_market_beta=0.20,
+    job_offer_equity_market_beta=0.35,
+    college_tuition_inflation_rate=0.05,
+    college_student_loan_rate=0.065,
+    college_student_loan_term_years=10,
     buyer_closing_cost_rate=0.03,
 )
 
@@ -265,6 +270,36 @@ def assumption_bundle_from_payload(payload: dict) -> AssumptionBundle:
                 DEFAULT_SYSTEM_ASSUMPTIONS.retirement_return_autocorrelation,
             )
         ),
+        job_offer_bonus_market_beta=float(
+            payload.get(
+                "job_offer_bonus_market_beta",
+                DEFAULT_SYSTEM_ASSUMPTIONS.job_offer_bonus_market_beta,
+            )
+        ),
+        job_offer_equity_market_beta=float(
+            payload.get(
+                "job_offer_equity_market_beta",
+                DEFAULT_SYSTEM_ASSUMPTIONS.job_offer_equity_market_beta,
+            )
+        ),
+        college_tuition_inflation_rate=float(
+            payload.get(
+                "college_tuition_inflation_rate",
+                DEFAULT_SYSTEM_ASSUMPTIONS.college_tuition_inflation_rate,
+            )
+        ),
+        college_student_loan_rate=float(
+            payload.get(
+                "college_student_loan_rate",
+                DEFAULT_SYSTEM_ASSUMPTIONS.college_student_loan_rate,
+            )
+        ),
+        college_student_loan_term_years=int(
+            payload.get(
+                "college_student_loan_term_years",
+                DEFAULT_SYSTEM_ASSUMPTIONS.college_student_loan_term_years,
+            )
+        ),
         buyer_closing_cost_rate=float(payload.get("buyer_closing_cost_rate", DEFAULT_SYSTEM_ASSUMPTIONS.buyer_closing_cost_rate)),
     )
     audit_payload = payload.get("audit_trail")
@@ -286,6 +321,11 @@ def assumption_bundle_to_payload(bundle: AssumptionBundle) -> dict:
         "selling_cost_rate": assumptions.selling_cost_rate,
         "annual_pmi_rate": assumptions.annual_pmi_rate,
         "retirement_return_autocorrelation": assumptions.retirement_return_autocorrelation,
+        "job_offer_bonus_market_beta": assumptions.job_offer_bonus_market_beta,
+        "job_offer_equity_market_beta": assumptions.job_offer_equity_market_beta,
+        "college_tuition_inflation_rate": assumptions.college_tuition_inflation_rate,
+        "college_student_loan_rate": assumptions.college_student_loan_rate,
+        "college_student_loan_term_years": assumptions.college_student_loan_term_years,
         "buyer_closing_cost_rate": assumptions.buyer_closing_cost_rate,
         "monte_carlo": {
             "scenario_count": monte_carlo.scenario_count,

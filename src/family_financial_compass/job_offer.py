@@ -13,6 +13,9 @@ from .models import (
     SystemAssumptions,
 )
 
+_BONUS_FACTOR_CAP = 2.5
+_EQUITY_FACTOR_CAP = 5.0
+
 
 class JobOfferEngine:
     def __init__(self, assumptions: SystemAssumptions) -> None:
@@ -21,7 +24,7 @@ class JobOfferEngine:
     def analyze(
         self,
         user_inputs: JobOfferScenarioInput,
-        audit_trail: list[AssumptionAuditItem] | None = None,
+        audit_trail: tuple[AssumptionAuditItem, ...] | None = None,
         seed: int = 7,
     ) -> JobOfferAnalysis:
         deterministic = self._run_deterministic(user_inputs)
@@ -30,7 +33,7 @@ class JobOfferEngine:
         return JobOfferAnalysis(
             deterministic=deterministic,
             monte_carlo=monte_carlo,
-            audit_trail=audit_trail or self._build_audit_trail(user_inputs),
+            audit_trail=tuple(audit_trail) if audit_trail is not None else self._build_audit_trail(user_inputs),
             warnings=tuple(warnings),
         )
 
@@ -127,14 +130,18 @@ class JobOfferEngine:
         bonus_noise = rng.normal(size=(scenario_count, comparison_years))
         equity_noise = rng.normal(size=(scenario_count, comparison_years))
         bonus_factor = np.clip(
-            1.0 + (0.20 * market_factor) + (offer.bonus_payout_volatility * bonus_noise),
+            1.0
+            + (self.assumptions.job_offer_bonus_market_beta * market_factor)
+            + (offer.bonus_payout_volatility * bonus_noise),
             0.0,
-            2.5,
+            _BONUS_FACTOR_CAP,
         )
         equity_factor = np.clip(
-            1.0 + (0.35 * market_factor) + (offer.equity_volatility * equity_noise),
+            1.0
+            + (self.assumptions.job_offer_equity_market_beta * market_factor)
+            + (offer.equity_volatility * equity_noise),
             0.0,
-            5.0,
+            _EQUITY_FACTOR_CAP,
         )
         bonus_realized = np.rint(bonus[np.newaxis, :] * bonus_factor).astype(np.int64)
         equity_realized = np.rint(equity[np.newaxis, :] * equity_factor).astype(np.int64)
@@ -152,19 +159,21 @@ class JobOfferEngine:
         horizon = user_inputs.comparison_years
         rng = np.random.default_rng(seed)
         market_factor = rng.normal(size=(scenario_count, horizon))
+        rng_a = np.random.default_rng(rng.integers(2**31))
+        rng_b = np.random.default_rng(rng.integers(2**31))
         annual_a = self._simulate_offer_annual_values(
             user_inputs.offer_a,
             horizon,
             user_inputs.marginal_tax_rate,
             market_factor,
-            rng,
+            rng_a,
         )
         annual_b = self._simulate_offer_annual_values(
             user_inputs.offer_b,
             horizon,
             user_inputs.marginal_tax_rate,
             market_factor,
-            rng,
+            rng_b,
         )
 
         monthly_advantage = self._annual_to_monthly(annual_b - annual_a)
@@ -179,7 +188,7 @@ class JobOfferEngine:
             terminal_advantage.astype(np.float64),
             lambda_ * terminal_advantage.astype(np.float64),
         )
-        median_break_even_month = (
+        conditional_median_break_even_month = (
             int(np.median(first_cross[any_cross]))
             if np.any(any_cross)
             else None
@@ -188,7 +197,7 @@ class JobOfferEngine:
             scenario_count=scenario_count,
             probability_offer_b_wins=float(np.mean(terminal_advantage > 0)),
             probability_break_even_within_horizon=float(np.mean(any_cross)),
-            median_break_even_month=median_break_even_month,
+            conditional_median_break_even_month=conditional_median_break_even_month,
             median_terminal_advantage_cents=int(np.percentile(terminal_advantage, 50)),
             p10_terminal_advantage_cents=int(np.percentile(terminal_advantage, 10)),
             p90_terminal_advantage_cents=int(np.percentile(terminal_advantage, 90)),
@@ -201,8 +210,8 @@ class JobOfferEngine:
             return 0.0
         return offer.annual_equity_vesting_cents / gross
 
-    def _build_audit_trail(self, user_inputs: JobOfferScenarioInput) -> list[AssumptionAuditItem]:
-        return [
+    def _build_audit_trail(self, user_inputs: JobOfferScenarioInput) -> tuple[AssumptionAuditItem, ...]:
+        return tuple([
             AssumptionAuditItem(
                 name="Marginal tax rate",
                 parameter="job_offer_marginal_tax_rate",
@@ -228,12 +237,24 @@ class JobOfferEngine:
                 source="User input",
             ),
             AssumptionAuditItem(
+                name=f"{user_inputs.offer_a.label} equity volatility",
+                parameter="offer_a_equity_volatility",
+                value=f"{user_inputs.offer_a.equity_volatility * 100:.0f}%",
+                source="User input",
+            ),
+            AssumptionAuditItem(
+                name=f"{user_inputs.offer_b.label} bonus volatility",
+                parameter="offer_b_bonus_volatility",
+                value=f"{user_inputs.offer_b.bonus_payout_volatility * 100:.0f}%",
+                source="User input",
+            ),
+            AssumptionAuditItem(
                 name=f"{user_inputs.offer_b.label} equity volatility",
                 parameter="offer_b_equity_volatility",
                 value=f"{user_inputs.offer_b.equity_volatility * 100:.0f}%",
                 source="User input",
             ),
-        ]
+        ])
 
     def _build_warnings(
         self,

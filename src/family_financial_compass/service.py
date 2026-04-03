@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from .assumptions import InMemoryAssumptionStore, apply_assumption_overrides
+from .college_vs_retirement import CollegeVsRetirementEngine
 from .config import AssumptionBundle, assumption_bundle_from_payload
 from .job_offer import JobOfferEngine
 from .legal import OUTPUT_DISCLAIMER
 from .models import (
     AssumptionOverrides,
+    CollegeVsRetirementAnalysis,
+    CollegeVsRetirementScenarioInput,
     JobOfferAnalysis,
     JobOfferScenarioInput,
     RetirementScenarioInput,
@@ -182,6 +185,42 @@ class FamilyFinancialCompassService:
             audit_trail_snapshot=audit_trail_snapshot,
         )
         analysis = JobOfferEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        return {
+            "model_version": bundle.assumptions.model_version,
+            "disclaimer": OUTPUT_DISCLAIMER,
+            "analysis": serialize_model(analysis),
+        }
+
+    def analyze_college_vs_retirement(
+        self,
+        user_inputs: CollegeVsRetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> CollegeVsRetirementAnalysis:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        engine = CollegeVsRetirementEngine(bundle.assumptions)
+        return engine.analyze(user_inputs, audit_trail=list(bundle.audit_trail), seed=seed)
+
+    def analyze_college_vs_retirement_payload(
+        self,
+        user_inputs: CollegeVsRetirementScenarioInput,
+        seed: int = 7,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> dict:
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = CollegeVsRetirementEngine(bundle.assumptions).analyze(
             user_inputs,
             audit_trail=list(bundle.audit_trail),
             seed=seed,

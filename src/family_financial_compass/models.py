@@ -127,6 +127,11 @@ class SystemAssumptions:
     monte_carlo: MonteCarloCalibration
     behavioral: BehavioralAdjustments
     retirement_return_autocorrelation: float = 0.15
+    job_offer_bonus_market_beta: float = 0.20
+    job_offer_equity_market_beta: float = 0.35
+    college_tuition_inflation_rate: float = 0.05
+    college_student_loan_rate: float = 0.065
+    college_student_loan_term_years: int = 10
     buyer_closing_cost_rate: float = 0.03
 
     def __post_init__(self) -> None:
@@ -145,6 +150,16 @@ class SystemAssumptions:
             raise ValueError("annual_rent_growth_rate must be greater than -1 and no more than 1.")
         if not -1.0 < self.retirement_return_autocorrelation < 1.0:
             raise ValueError("retirement_return_autocorrelation must be between -1 and 1.")
+        if self.job_offer_bonus_market_beta < 0.0:
+            raise ValueError("job_offer_bonus_market_beta must be non-negative.")
+        if self.job_offer_equity_market_beta < 0.0:
+            raise ValueError("job_offer_equity_market_beta must be non-negative.")
+        if not 0.0 <= self.college_tuition_inflation_rate <= 1.0:
+            raise ValueError("college_tuition_inflation_rate must be between 0 and 1.")
+        if not 0.0 <= self.college_student_loan_rate <= 1.0:
+            raise ValueError("college_student_loan_rate must be between 0 and 1.")
+        if self.college_student_loan_term_years <= 0:
+            raise ValueError("college_student_loan_term_years must be positive.")
         if self.annual_home_insurance_cents < 0:
             raise ValueError("Annual home insurance must be non-negative.")
 
@@ -460,7 +475,6 @@ class JobOffer:
             "annual_equity_vesting_cents": self.annual_equity_vesting_cents,
             "sign_on_bonus_cents": self.sign_on_bonus_cents,
             "relocation_cost_cents": self.relocation_cost_cents,
-            "annual_cost_of_living_delta_cents": self.annual_cost_of_living_delta_cents,
             "annual_commute_cost_cents": self.annual_commute_cost_cents,
         }
         for name, value in non_negative_values.items():
@@ -493,6 +507,8 @@ class JobOfferScenarioInput:
     def __post_init__(self) -> None:
         if self.comparison_years <= 0:
             raise ValueError("comparison_years must be positive.")
+        if self.comparison_years > 10:
+            raise ValueError("comparison_years must be between 1 and 10.")
         if not 0.0 <= self.marginal_tax_rate <= 0.60:
             raise ValueError("marginal_tax_rate must be between 0.0 and 0.60.")
 
@@ -519,7 +535,7 @@ class JobOfferMonteCarloSummary:
     scenario_count: int
     probability_offer_b_wins: float
     probability_break_even_within_horizon: float
-    median_break_even_month: int | None
+    conditional_median_break_even_month: int | None
     median_terminal_advantage_cents: int
     p10_terminal_advantage_cents: int
     p90_terminal_advantage_cents: int
@@ -530,7 +546,86 @@ class JobOfferMonteCarloSummary:
 class JobOfferAnalysis:
     deterministic: JobOfferDeterministicSummary
     monte_carlo: JobOfferMonteCarloSummary
-    audit_trail: list[AssumptionAuditItem]
+    audit_trail: tuple[AssumptionAuditItem, ...]
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CollegeVsRetirementScenarioInput:
+    current_retirement_savings_cents: int
+    current_college_savings_cents: int
+    annual_savings_budget_cents: int
+    annual_college_cost_cents: int
+    years_until_college: int
+    years_in_college: int = 4
+    retirement_years: int = 18
+    expected_annual_return_rate: float = 0.06
+    risk_profile: RiskProfile = RiskProfile.MODERATE
+    loss_behavior: LossBehavior = LossBehavior.HOLD
+
+    def __post_init__(self) -> None:
+        if self.current_retirement_savings_cents < 0:
+            raise ValueError("current_retirement_savings_cents must be non-negative.")
+        if self.current_college_savings_cents < 0:
+            raise ValueError("current_college_savings_cents must be non-negative.")
+        if self.annual_savings_budget_cents < 0:
+            raise ValueError("annual_savings_budget_cents must be non-negative.")
+        if self.annual_college_cost_cents <= 0:
+            raise ValueError("annual_college_cost_cents must be positive.")
+        if self.years_until_college < 0:
+            raise ValueError("years_until_college must be non-negative.")
+        if self.years_in_college <= 0:
+            raise ValueError("years_in_college must be positive.")
+        if self.retirement_years <= 0:
+            raise ValueError("retirement_years must be positive.")
+        if self.expected_annual_return_rate <= -1.0 or self.expected_annual_return_rate > 1.0:
+            raise ValueError("expected_annual_return_rate must be greater than -1 and no more than 1.")
+
+
+@dataclass(frozen=True)
+class CollegeVsRetirementYearComparisonRow:
+    year: int
+    college_first_net_worth_cents: int
+    retirement_first_net_worth_cents: int
+    retirement_first_minus_college_first_cents: int
+    college_first_retirement_cents: int
+    retirement_first_retirement_cents: int
+    college_first_college_fund_cents: int
+    retirement_first_college_fund_cents: int
+    college_first_loan_balance_cents: int
+    retirement_first_loan_balance_cents: int
+
+
+@dataclass(frozen=True)
+class CollegeVsRetirementDeterministicSummary:
+    break_even_year: int | None
+    end_of_horizon_advantage_cents: int
+    college_first_terminal_retirement_cents: int
+    retirement_first_terminal_retirement_cents: int
+    college_first_total_loan_cents: int
+    retirement_first_total_loan_cents: int
+    yearly_rows: tuple[CollegeVsRetirementYearComparisonRow, ...]
+
+
+@dataclass(frozen=True)
+class CollegeVsRetirementMonteCarloSummary:
+    scenario_count: int
+    probability_retirement_first_wins: float
+    probability_break_even_within_horizon: float
+    conditional_median_break_even_year: int | None
+    median_terminal_advantage_cents: int
+    p10_terminal_advantage_cents: int
+    p90_terminal_advantage_cents: int
+    median_retirement_first_terminal_retirement_cents: int
+    median_college_first_terminal_retirement_cents: int
+    utility_adjusted_p50_advantage_cents: int
+
+
+@dataclass(frozen=True)
+class CollegeVsRetirementAnalysis:
+    deterministic: CollegeVsRetirementDeterministicSummary
+    monte_carlo: CollegeVsRetirementMonteCarloSummary
+    audit_trail: tuple[AssumptionAuditItem, ...]
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 

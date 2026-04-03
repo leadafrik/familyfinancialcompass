@@ -4,12 +4,15 @@ from .assumptions import (
     PostgresAssumptionStore,
     apply_assumption_overrides,
 )
+from .college_vs_retirement import CollegeVsRetirementEngine
 from .config import DEFAULT_SYSTEM_ASSUMPTIONS, MODEL_VERSION
 from .db import InMemoryScenarioRepository, ScenarioRepository
 from .job_offer import JobOfferEngine
 from .models import (
     AssumptionOverrides,
     AssumptionAuditItem,
+    CollegeVsRetirementAnalysis,
+    CollegeVsRetirementScenarioInput,
     FilingStatus,
     HousingStatus,
     IncomeStability,
@@ -42,6 +45,9 @@ from .tax import (
 __all__ = [
     "AssumptionAuditItem",
     "AssumptionOverrides",
+    "CollegeVsRetirementAnalysis",
+    "CollegeVsRetirementEngine",
+    "CollegeVsRetirementScenarioInput",
     "DEFAULT_SYSTEM_ASSUMPTIONS",
     "FileAssumptionStore",
     "FilingStatus",

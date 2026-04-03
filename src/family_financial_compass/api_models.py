@@ -8,6 +8,7 @@ from pydantic import StrictInt
 
 from .models import (
     AssumptionOverrides,
+    CollegeVsRetirementScenarioInput,
     FilingStatus,
     HousingStatus,
     IncomeStability,
@@ -113,7 +114,7 @@ class JobOfferModel(BaseModel):
     annual_equity_vesting_cents: StrictInt = Field(default=0, ge=0)
     sign_on_bonus_cents: StrictInt = Field(default=0, ge=0)
     relocation_cost_cents: StrictInt = Field(default=0, ge=0)
-    annual_cost_of_living_delta_cents: StrictInt = Field(default=0, ge=0)
+    annual_cost_of_living_delta_cents: StrictInt = Field(default=0)
     annual_commute_cost_cents: StrictInt = Field(default=0, ge=0)
     annual_comp_growth_rate: float = Field(default=0.03, gt=-1.0, le=1.0)
     annual_equity_growth_rate: float = Field(default=0.0, gt=-1.0, le=1.0)
@@ -129,7 +130,7 @@ class JobOfferAnalyzeInputModel(BaseModel):
 
     offer_a: JobOfferModel
     offer_b: JobOfferModel
-    comparison_years: StrictInt = Field(default=4, gt=0, le=10)
+    comparison_years: StrictInt = Field(default=4, gt=0)
     marginal_tax_rate: float = Field(default=0.24, ge=0.0, le=0.60)
     local_market_concentration: bool = False
 
@@ -148,6 +149,33 @@ class JobOfferAnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: JobOfferAnalyzeInputModel
+    simulation_seed: StrictInt = Field(default=7, ge=0)
+    assumptions_snapshot: dict[str, Any] | None = None
+    audit_trail_snapshot: list[dict[str, Any]] | None = None
+
+
+class CollegeVsRetirementInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_retirement_savings_cents: StrictInt = Field(ge=0)
+    current_college_savings_cents: StrictInt = Field(default=0, ge=0)
+    annual_savings_budget_cents: StrictInt = Field(default=0, ge=0)
+    annual_college_cost_cents: StrictInt = Field(gt=0)
+    years_until_college: StrictInt = Field(ge=0)
+    years_in_college: StrictInt = Field(default=4, gt=0)
+    retirement_years: StrictInt = Field(default=18, gt=0)
+    expected_annual_return_rate: float = Field(default=0.06, gt=-1.0, le=1.0)
+    risk_profile: RiskProfile = RiskProfile.MODERATE
+    loss_behavior: LossBehavior = LossBehavior.HOLD
+
+    def to_domain(self) -> CollegeVsRetirementScenarioInput:
+        return CollegeVsRetirementScenarioInput(**self.model_dump())
+
+
+class CollegeVsRetirementAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: CollegeVsRetirementInputModel
     simulation_seed: StrictInt = Field(default=7, ge=0)
     assumptions_snapshot: dict[str, Any] | None = None
     audit_trail_snapshot: list[dict[str, Any]] | None = None
