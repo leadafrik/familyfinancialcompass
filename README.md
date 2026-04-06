@@ -107,6 +107,30 @@ npm run dev
 
 The Vite dev server proxies `/api` to the deployed Cloud Run backend by default. To point the UI at a different API base, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_BASE_URL`.
 
+To mount the calculator under an existing site such as `leadafrik.com`, you can also set:
+
+- `VITE_APP_BASE_PATH=/calculator/` to serve the built frontend from a subpath like `https://www.leadafrik.com/calculator/`
+- `VITE_EMBED_MODE=true` to remove the standalone sidebar and use a compact embedded layout
+- `VITE_DEFAULT_MODULE=rent-vs-buy` to choose which calculator opens first
+
+The frontend also reads URL parameters, so `?module=job-offer` switches the default tool and `?embed=1` forces the compact embed layout without rebuilding.
+
+If the API stays on a different origin, set `FFC_ALLOWED_ORIGINS=https://www.leadafrik.com,https://leadafrik.com` on the FastAPI service. If you reverse-proxy the API through the same domain instead, point `VITE_API_BASE_URL` at that same-origin path, for example `/calculator-api`.
+
+Example LeadAfrik deployment flow:
+
+```powershell
+cd frontend
+copy .env.example .env
+# then edit .env and set:
+# VITE_APP_BASE_PATH=/calculator/
+# VITE_EMBED_MODE=true
+# VITE_API_BASE_URL=/calculator-api
+npm run build
+```
+
+That build can then be served by the website at `https://www.leadafrik.com/calculator/`, or embedded inside an existing page with an iframe that points at that route.
+
 The rent-vs-buy UI now supports on-demand PDF generation and a compact live-assumptions drawer. The browser requests the current default assumption bundle from `GET /v1/rent-vs-buy/assumptions/current`, lets the user override the most material housing assumptions with sliders, sends those overrides into `POST /v1/rent-vs-buy/analyze` and `POST /v1/rent-vs-buy/report`, and renders the PDF locally with React-PDF. If `GROQ_API_KEY` is configured on the backend, the short narrative sections are generated through Groq; otherwise the app falls back to deterministic template text.
 
 Current product shape:

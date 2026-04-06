@@ -309,10 +309,13 @@ export interface ReportInputsSummaryRow {
 }
 
 export interface ReportAuditTrailRow {
+  parameter?: string | null;
+  name?: string | null;
   label: string;
   value: string | number | null;
   source: string;
   last_updated: string | null;
+  notes?: string | null;
 }
 
 export interface ReportYearRow {

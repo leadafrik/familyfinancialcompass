@@ -331,6 +331,22 @@ def test_report_payload_contains_model_backed_sections() -> None:
     assert report["year_one_costs"]["gross_annual_cents"] >= report["year_one_costs"]["true_annual_cents"]
     assert any(item["label"] == "Buyer closing costs" for item in report["audit_trail"])
     assert "does not reach break-even" in report["narratives"]["verdict_driver"]
+    assert not any(
+        item.get("parameter") in {"college_tuition_inflation_rate", "college_student_loan_rate", "college_student_loan_term_years"}
+        for item in report["audit_trail"]
+    )
+    liquidity_rows = [item for item in report["audit_trail"] if item.get("parameter") == "liquidity_premium_rate"]
+    assert len(liquidity_rows) == 1
+    assert "housing liquidity research" in liquidity_rows[0]["source"].lower()
+    assert report["year_one_costs"]["true_annual_cents"] == (
+        report["year_one_costs"]["principal_and_interest_cents"]
+        + report["year_one_costs"]["property_tax_cents"]
+        + report["year_one_costs"]["insurance_cents"]
+        + report["year_one_costs"]["maintenance_cents"]
+        + report["year_one_costs"]["pmi_cents"]
+        + report["year_one_costs"]["liquidity_premium_cents"]
+        - report["year_one_costs"]["mortgage_interest_tax_saving_cents"]
+    )
 
 
 def test_report_endpoint_is_available() -> None:
@@ -415,6 +431,15 @@ def test_retirement_report_builder_uses_template_fallback() -> None:
     assert report["verdict"]["probability_portfolio_survives"] >= 0.0
     assert len(report["yearly_projection"]) == _retirement_inputs().retirement_years
     assert report["narratives"]["survival_verdict"]
+    assert [item["parameter"] for item in report["audit_trail"]] == [
+        "loss_aversion_lambda",
+        "panic_sale_expected_return_penalty",
+        "scenario_count",
+        "expected_annual_return_rate",
+        "retirement_return_volatility",
+        "retirement_return_autocorrelation",
+    ]
+    assert "safe annual draw" in report["narratives"]["withdrawal_rate_summary"]
 
 
 def test_job_offer_report_builder_uses_template_fallback() -> None:

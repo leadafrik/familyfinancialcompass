@@ -295,6 +295,13 @@ class CollegeVsRetirementEngine:
                 source="User input",
             ),
             AssumptionAuditItem(
+                name="Return autocorrelation",
+                parameter="retirement_return_autocorrelation",
+                value=round(self.assumptions.retirement_return_autocorrelation, 2),
+                source="Retirement simulation calibration. AR(1) momentum parameter.",
+                last_updated=date(2025, 1, 1),
+            ),
+            AssumptionAuditItem(
                 name="Tuition inflation rate",
                 parameter="college_tuition_inflation_rate",
                 value=f"{self.assumptions.college_tuition_inflation_rate * 100:.2f}%",

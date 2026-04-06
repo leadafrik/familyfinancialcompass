@@ -38,6 +38,10 @@ const styles = StyleSheet.create({
     lineHeight: 1.45,
     marginBottom: 12,
   },
+  metaLine: {
+    color: "#5f6f67",
+    marginBottom: 12,
+  },
   paragraph: {
     lineHeight: 1.45,
     marginBottom: 10,
@@ -78,6 +82,37 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 14,
     fontFamily: "Helvetica-Bold",
+  },
+  metricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  metricCard: {
+    width: "48%",
+    borderWidth: 1,
+    borderColor: "#d2ddd5",
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: "#f7fbf7",
+    marginBottom: 10,
+  },
+  metricCardLabel: {
+    color: "#506259",
+    fontSize: 9,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  metricCardValue: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 15,
+    marginBottom: 4,
+  },
+  metricCardNote: {
+    color: "#5f6f67",
+    fontSize: 9,
+    lineHeight: 1.35,
   },
   twoColumn: {
     flexDirection: "row",
@@ -148,6 +183,14 @@ const styles = StyleSheet.create({
     borderLeftColor: "#274737",
     backgroundColor: "#f4f8f4",
   },
+  compactCallout: {
+    marginTop: 8,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: "#274737",
+    backgroundColor: "#f4f8f4",
+    marginBottom: 12,
+  },
   boxGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -164,6 +207,11 @@ const styles = StyleSheet.create({
   },
   bullet: {
     marginBottom: 6,
+    lineHeight: 1.4,
+  },
+  tableIntro: {
+    color: "#5f6f67",
+    marginBottom: 10,
     lineHeight: 1.4,
   },
   footer: {
@@ -184,8 +232,41 @@ function formatCurrency(cents: number): string {
   return `${sign}$${(absolute / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
-function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(0)}%`;
+function formatPercent(value: number, digits = 0): string {
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function formatDateLabel(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatRetirementYear(year: number | null): string {
+  return year === null ? "Not depleted" : `Year ${year}`;
+}
+
+function retirementHeadline(report: RetirementSurvivalReport): string {
+  if (report.verdict.probability_portfolio_survives >= 0.9 && report.withdrawal_analysis.withdrawal_rate_gap >= 0) {
+    return "The current plan clears the horizon with a wide modeled cushion.";
+  }
+  if (report.verdict.probability_portfolio_survives >= 0.75) {
+    return "The current plan reaches the horizon in most futures, but the margin is tight.";
+  }
+  if (report.verdict.probability_portfolio_survives >= 0.5) {
+    return "The current plan works in some futures, but depletion risk is meaningful.";
+  }
+  return "The current plan shows high depletion risk under the modeled assumptions.";
+}
+
+function retirementProjectionMilestones(report: RetirementSurvivalReport) {
+  const milestoneYears = new Set<number>([1, 5, 10, 15, 20, 25, report.verdict.horizon_years]);
+  if (report.verdict.conditional_median_depletion_year !== null) {
+    milestoneYears.add(report.verdict.conditional_median_depletion_year);
+  }
+  return report.yearly_projection.filter((row) => milestoneYears.has(row.year));
 }
 
 function Row({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
@@ -251,16 +332,16 @@ function AuditTable({ rows }: { rows: ReportAuditTrailRow[] }) {
   return (
     <View style={styles.table}>
       <View style={styles.tableHeader}>
-        <View style={[styles.cell, { width: "28%" }]}><Text style={styles.headerCellText}>Assumption</Text></View>
-        <View style={[styles.cell, { width: "18%" }]}><Text style={styles.headerCellText}>Value</Text></View>
-        <View style={[styles.cell, { width: "34%" }]}><Text style={styles.headerCellText}>Source</Text></View>
+        <View style={[styles.cell, { width: "26%" }]}><Text style={styles.headerCellText}>Assumption</Text></View>
+        <View style={[styles.cell, { width: "14%" }]}><Text style={styles.headerCellText}>Value</Text></View>
+        <View style={[styles.cell, { width: "40%" }]}><Text style={styles.headerCellText}>Source</Text></View>
         <View style={[styles.cell, { width: "20%" }]}><Text style={styles.headerCellText}>Date</Text></View>
       </View>
       {rows.map((row, index) => (
-        <View key={`${row.label}-${index}`} style={index === rows.length - 1 ? [styles.tableRow, styles.rowLast] : styles.tableRow}>
-          <View style={[styles.cell, { width: "28%" }]}><Text style={styles.bodyCellText}>{row.label}</Text></View>
-          <View style={[styles.cell, { width: "18%" }]}><Text style={styles.bodyCellText}>{row.value === null ? "-" : String(row.value)}</Text></View>
-          <View style={[styles.cell, { width: "34%" }]}><Text style={styles.bodyCellText}>{row.source}</Text></View>
+        <View key={`${row.label}-${index}`} wrap={false} style={index === rows.length - 1 ? [styles.tableRow, styles.rowLast] : styles.tableRow}>
+          <View style={[styles.cell, { width: "26%" }]}><Text style={styles.bodyCellText}>{row.label}</Text></View>
+          <View style={[styles.cell, { width: "14%" }]}><Text style={styles.bodyCellText}>{row.value === null ? "-" : String(row.value)}</Text></View>
+          <View style={[styles.cell, { width: "40%" }]}><Text style={styles.bodyCellText}>{row.source}</Text></View>
           <View style={[styles.cell, { width: "20%" }]}><Text style={styles.bodyCellText}>{row.last_updated ?? "-"}</Text></View>
         </View>
       ))}
@@ -268,11 +349,35 @@ function AuditTable({ rows }: { rows: ReportAuditTrailRow[] }) {
   );
 }
 
-function Footer({ pageNumber }: { pageNumber: number }) {
+function RetirementProjectionTable({ report }: { report: RetirementSurvivalReport }) {
+  const rows = retirementProjectionMilestones(report);
+  return (
+    <View style={styles.table}>
+      <View style={styles.tableHeader}>
+        <View style={[styles.cell, { width: "12%" }]}><Text style={styles.headerCellText}>Year</Text></View>
+        <View style={[styles.cell, { width: "22%" }]}><Text style={styles.headerCellText}>Deterministic</Text></View>
+        <View style={[styles.cell, { width: "22%" }]}><Text style={styles.headerCellText}>Median</Text></View>
+        <View style={[styles.cell, { width: "28%" }]}><Text style={styles.headerCellText}>P10 to P90</Text></View>
+        <View style={[styles.cell, { width: "16%" }]}><Text style={styles.headerCellText}>Depleted by then</Text></View>
+      </View>
+      {rows.map((row, index) => (
+        <View key={row.year} wrap={false} style={index === rows.length - 1 ? [styles.tableRow, styles.rowLast] : styles.tableRow}>
+          <View style={[styles.cell, { width: "12%" }]}><Text style={styles.bodyCellText}>{row.year}</Text></View>
+          <View style={[styles.cell, { width: "22%" }]}><Text style={styles.bodyCellText}>{formatCurrency(row.deterministic_portfolio_cents)}</Text></View>
+          <View style={[styles.cell, { width: "22%" }]}><Text style={styles.bodyCellText}>{formatCurrency(row.median_portfolio_cents)}</Text></View>
+          <View style={[styles.cell, { width: "28%" }]}><Text style={styles.bodyCellText}>{`${formatCurrency(row.p10_portfolio_cents)} to ${formatCurrency(row.p90_portfolio_cents)}`}</Text></View>
+          <View style={[styles.cell, { width: "16%" }]}><Text style={styles.bodyCellText}>{formatPercent(row.cumulative_depletion_probability)}</Text></View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Footer() {
   return (
     <View style={styles.footer} fixed>
       <Text>Family Financial Compass</Text>
-      <Text>Page {pageNumber}</Text>
+      <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
     </View>
   );
 }
@@ -310,7 +415,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
           <Row label="Downside outcome" value={formatCurrency(report.verdict.p10_terminal_advantage_cents)} />
           <Row label="Upside outcome" value={formatCurrency(report.verdict.p90_terminal_advantage_cents)} last />
         </View>
-        <Footer pageNumber={1} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -331,7 +436,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
           All assumptions are sourced from public data. The audit trail below shows the source and date attached to each system-sourced value.
         </Text>
         <AuditTable rows={report.audit_trail} />
-        <Footer pageNumber={2} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -342,7 +447,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
         <View style={styles.callout}>
           <Text>{report.verdict.break_even_month === null ? "The paths do not cross inside the chosen horizon." : `The modeled break-even point occurs at month ${report.verdict.break_even_month}.`}</Text>
         </View>
-        <Footer pageNumber={3} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -362,7 +467,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
           <Row label="Current rent" value={formatCurrency(report.year_one_costs.current_rent_annual_cents)} />
           <Row label="Year one cash difference" value={formatCurrency(report.year_one_costs.cash_difference_annual_cents)} last />
         </View>
-        <Footer pageNumber={4} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -403,7 +508,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
             </Text>
           </View>
         </View>
-        <Footer pageNumber={5} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -416,7 +521,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
             Most sensitive assumption: {report.sensitivity.most_sensitive_label} ({report.sensitivity.largest_probability_shift_points.toFixed(0)} percentage-point probability shift).
           </Text>
         </View>
-        <Footer pageNumber={6} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -433,11 +538,8 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>3. What risk sits outside the base case?</Text>
           <Text style={styles.paragraph}>{report.narratives.question_risk}</Text>
-          {report.questions.risk.warnings.map((warning) => (
-            <Text key={warning} style={styles.bullet}>- {warning}</Text>
-          ))}
         </View>
-        <Footer pageNumber={7} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -454,7 +556,7 @@ export function RentVsBuyReportDocument({ report }: { report: RentVsBuyReport })
         <View style={styles.callout}>
           <Text>Report narrative source: {report.narrative_source === "groq" ? "Groq" : "Template fallback"}.</Text>
         </View>
-        <Footer pageNumber={8} />
+        <Footer />
       </Page>
     </Document>
   );
@@ -469,38 +571,66 @@ export function RetirementSurvivalReportDocument({
     <Document title="Family Financial Compass Retirement Report">
       <Page size="LETTER" style={styles.page}>
         <Text style={styles.overline}>Retirement Survival Report</Text>
-        <Text style={styles.title}>The Verdict</Text>
+        <Text style={styles.title}>Retirement Plan Snapshot</Text>
         <Text style={styles.subtitle}>
-          This report describes the survival odds of the current retirement plan under the modeled assumptions.
+          A descriptive view of how the current spending plan behaves across the modeled retirement horizon.
         </Text>
+        <Text style={styles.metaLine}>Generated {formatDateLabel(report.generated_at)} for a {report.verdict.horizon_years}-year retirement horizon.</Text>
         <Text style={styles.disclaimer}>{report.disclaimer}</Text>
         <View style={styles.verdictBox}>
-          <Text style={styles.verdictHeadline}>{report.narratives.summary}</Text>
-          <View style={styles.metricRow}>
-            <View style={styles.metricBlock}>
-              <Text style={styles.metricLabel}>Plan survival</Text>
-              <Text style={styles.metricValue}>{formatPercent(report.verdict.probability_portfolio_survives)}</Text>
+          <Text style={styles.verdictHeadline}>{retirementHeadline(report)}</Text>
+          <Text style={styles.paragraph}>{report.narratives.summary}</Text>
+          <View style={styles.metricGrid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricCardLabel}>Plan survival</Text>
+              <Text style={styles.metricCardValue}>{formatPercent(report.verdict.probability_portfolio_survives)}</Text>
+              <Text style={styles.metricCardNote}>Share of modeled futures that stay above zero through year {report.verdict.horizon_years}.</Text>
             </View>
-            <View style={styles.metricBlock}>
-              <Text style={styles.metricLabel}>95% safe rate</Text>
-              <Text style={styles.metricValue}>{formatPercent(report.verdict.safe_withdrawal_rate_95)}</Text>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricCardLabel}>Net withdrawal rate</Text>
+              <Text style={styles.metricCardValue}>{formatPercent(report.withdrawal_analysis.current_withdrawal_rate, 2)}</Text>
+              <Text style={styles.metricCardNote}>Based on current net withdrawals of {formatCurrency(report.withdrawal_analysis.net_annual_withdrawal_cents)} a year.</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricCardLabel}>95% safe rate</Text>
+              <Text style={styles.metricCardValue}>{formatPercent(report.verdict.safe_withdrawal_rate_95, 2)}</Text>
+              <Text style={styles.metricCardNote}>Modeled safe annual draw: {formatCurrency(report.withdrawal_analysis.safe_withdrawal_annual_cents)}.</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricCardLabel}>Deterministic path</Text>
+              <Text style={styles.metricCardValue}>{formatRetirementYear(report.verdict.deterministic_depletion_year)}</Text>
+              <Text style={styles.metricCardNote}>The single-path projection without randomized return sequences.</Text>
             </View>
           </View>
         </View>
         <Text style={styles.paragraph}>{report.narratives.survival_verdict}</Text>
         <Text style={styles.paragraph}>{report.narratives.withdrawal_rate_summary}</Text>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Terminal wealth range</Text>
-          <Row label="Downside" value={formatCurrency(report.wealth_at_horizon.p10_terminal_wealth_cents)} />
-          <Row label="Median" value={formatCurrency(report.wealth_at_horizon.median_terminal_wealth_cents)} />
-          <Row label="Upside" value={formatCurrency(report.wealth_at_horizon.p90_terminal_wealth_cents)} last />
+        <View style={styles.twoColumn}>
+          <View style={styles.column}>
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Terminal wealth range</Text>
+              <Row label="Downside (P10)" value={formatCurrency(report.wealth_at_horizon.p10_terminal_wealth_cents)} />
+              <Row label="Median (P50)" value={formatCurrency(report.wealth_at_horizon.median_terminal_wealth_cents)} />
+              <Row label="Upside (P90)" value={formatCurrency(report.wealth_at_horizon.p90_terminal_wealth_cents)} last />
+            </View>
+          </View>
+          <View style={styles.columnSpacer} />
+          <View style={styles.column}>
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Withdrawal pressure</Text>
+              <Row label="Net planned draw" value={formatCurrency(report.withdrawal_analysis.net_annual_withdrawal_cents)} />
+              <Row label="Modeled safe draw" value={formatCurrency(report.withdrawal_analysis.safe_withdrawal_annual_cents)} />
+              <Row label="Annual gap" value={formatCurrency(report.withdrawal_analysis.safe_withdrawal_gap_cents)} />
+              <Row label="Rate gap" value={formatPercent(report.withdrawal_analysis.withdrawal_rate_gap, 2)} last />
+            </View>
+          </View>
         </View>
-        <Footer pageNumber={1} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
-        <Text style={styles.overline}>Page 2</Text>
-        <Text style={styles.title}>Inputs and Assumptions</Text>
+        <Text style={styles.overline}>Plan Diagnostics</Text>
+        <Text style={styles.title}>Inputs and Pressure Points</Text>
         <View style={styles.twoColumn}>
           <View style={styles.column}>
             <Text style={styles.sectionTitle}>Inputs</Text>
@@ -512,9 +642,75 @@ export function RetirementSurvivalReportDocument({
             <KeyValueList rows={report.assumptions_summary} />
           </View>
         </View>
-        <Text style={styles.paragraph}>{report.narratives.wealth_range_summary}</Text>
+        <View style={styles.boxGrid}>
+          <View style={styles.infoBox}>
+            <Text style={styles.sectionTitle}>Conditional median depletion</Text>
+            <Text style={styles.paragraph}>
+              {report.verdict.conditional_median_depletion_year === null
+                ? "Fewer than half of modeled paths deplete before the end of the horizon."
+                : `Among the paths that do deplete, the median depletion point is year ${report.verdict.conditional_median_depletion_year}.`}
+            </Text>
+          </View>
+          <View style={styles.infoBox}>
+            <Text style={styles.sectionTitle}>Deterministic terminal wealth</Text>
+            <Text style={styles.paragraph}>
+              The non-randomized path ends with {formatCurrency(report.wealth_at_horizon.deterministic_terminal_wealth_cents)} at the horizon.
+            </Text>
+          </View>
+          <View style={styles.infoBox}>
+            <Text style={styles.sectionTitle}>Median terminal wealth</Text>
+            <Text style={styles.paragraph}>
+              Across the modeled range, the midpoint outcome ends with {formatCurrency(report.wealth_at_horizon.median_terminal_wealth_cents)}.
+            </Text>
+          </View>
+          <View style={styles.infoBox}>
+            <Text style={styles.sectionTitle}>Range width</Text>
+            <Text style={styles.paragraph}>
+              The distance between the downside and upside terminal outcomes is {formatCurrency(report.wealth_at_horizon.p90_terminal_wealth_cents - report.wealth_at_horizon.p10_terminal_wealth_cents)}.
+            </Text>
+          </View>
+        </View>
+        <View style={styles.compactCallout}>
+          <Text>{report.narratives.wealth_range_summary}</Text>
+        </View>
+        <View style={styles.compactCallout}>
+          <Text>{report.narratives.risk_summary}</Text>
+        </View>
+        {report.warnings.length > 0 && (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Warnings the model flagged</Text>
+            {report.warnings.map((warning) => (
+              <Text key={warning} style={styles.bullet}>- {warning}</Text>
+            ))}
+          </View>
+        )}
+        <Footer />
+      </Page>
+
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Portfolio Path</Text>
+        <Text style={styles.title}>How the Portfolio Changes Over Time</Text>
+        <Text style={styles.tableIntro}>
+          The table below shows selected checkpoints from the yearly simulation output. The depletion column is cumulative: it shows the share of modeled paths that have already fallen to zero by that year.
+        </Text>
+        <RetirementProjectionTable report={report} />
+        <View style={styles.callout}>
+          <Text>
+            By year {report.verdict.horizon_years}, cumulative depletion reaches {formatPercent(1 - report.verdict.probability_portfolio_survives)}.
+            {" "}The deterministic path {report.verdict.deterministic_depletion_year === null ? "does not exhaust the portfolio inside the modeled horizon." : `reaches zero in year ${report.verdict.deterministic_depletion_year}.`}
+          </Text>
+        </View>
+        <Footer />
+      </Page>
+
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.overline}>Assumptions</Text>
+        <Text style={styles.title}>Audit Trail and Model Setup</Text>
+        <Text style={styles.tableIntro}>
+          This section is intentionally narrow. It lists only the retirement-specific assumptions and calibration settings that materially move this simulation, along with their sources and refresh dates.
+        </Text>
         <AuditTable rows={report.audit_trail} />
-        <Footer pageNumber={2} />
+        <Footer />
       </Page>
     </Document>
   );
@@ -552,7 +748,7 @@ export function JobOfferReportDocument({ report }: { report: JobOfferReport }) {
           <Row label="Downside case" value={formatCurrency(report.risk.p10_terminal_advantage_cents)} />
           <Row label="Upside case" value={formatCurrency(report.risk.p90_terminal_advantage_cents)} last />
         </View>
-        <Footer pageNumber={1} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -578,7 +774,7 @@ export function JobOfferReportDocument({ report }: { report: JobOfferReport }) {
           <Row label="Net first-year switch impact" value={formatCurrency(report.hidden_costs.offer_b_minus_offer_a_first_year_friction_cents)} last />
         </View>
         <AuditTable rows={report.audit_trail} />
-        <Footer pageNumber={2} />
+        <Footer />
       </Page>
     </Document>
   );
@@ -620,7 +816,7 @@ export function CollegeVsRetirementReportDocument({
           <Row label="College-first retirement balance" value={formatCurrency(report.retirement_outcomes.college_first_terminal_retirement_cents)} />
           <Row label="Retirement-first retirement balance" value={formatCurrency(report.retirement_outcomes.retirement_first_terminal_retirement_cents)} last />
         </View>
-        <Footer pageNumber={1} />
+        <Footer />
       </Page>
 
       <Page size="LETTER" style={styles.page}>
@@ -635,7 +831,7 @@ export function CollegeVsRetirementReportDocument({
           <Row label="Retirement-first total interest" value={formatCurrency(report.funding_analysis.retirement_first_total_interest_cents)} last />
         </View>
         <AuditTable rows={report.audit_trail} />
-        <Footer pageNumber={2} />
+        <Footer />
       </Page>
     </Document>
   );

@@ -64,6 +64,11 @@ select {
   min-height: 100vh;
 }
 
+.app-shell--embed {
+  display: block;
+  min-height: auto;
+}
+
 .sidebar {
   padding: 1.4rem;
   border-right: 1px solid var(--line);
@@ -123,6 +128,11 @@ select {
   gap: 0.7rem;
 }
 
+.module-list--compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 1rem;
+}
+
 .module-card,
 .panel,
 .button,
@@ -147,6 +157,10 @@ select {
   padding: 0.95rem 1rem;
   text-align: left;
   cursor: pointer;
+}
+
+.module-card--compact {
+  min-height: 100%;
 }
 
 .module-card strong {
@@ -179,12 +193,20 @@ select {
   padding: 1.6rem;
 }
 
+.workspace--embed {
+  padding: 1.25rem;
+}
+
 .workspace-header {
   display: flex;
   justify-content: space-between;
   gap: 1.2rem;
   align-items: end;
   margin-bottom: 1rem;
+}
+
+.workspace-header--embed {
+  align-items: start;
 }
 
 .workspace-header h2,
@@ -716,6 +738,10 @@ select {
     display: block;
   }
 
+  .module-list--compact {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
@@ -739,6 +765,10 @@ select {
 @media (max-width: 720px) {
   .sidebar,
   .workspace {
+    padding: 1rem;
+  }
+
+  .workspace--embed {
     padding: 1rem;
   }
 

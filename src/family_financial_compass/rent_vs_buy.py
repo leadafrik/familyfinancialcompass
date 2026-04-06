@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import numpy_financial as npf
 
@@ -132,13 +134,32 @@ class RentVsBuyEngine:
         return band.stated
 
     def _build_audit_trail(self, user_inputs: UserScenarioInput) -> list[AssumptionAuditItem]:
-        trail = list(build_default_audit_trail())
-        existing_parameters = {item.parameter for item in trail if item.parameter}
-        for item in build_behavioral_audit_trail():
-            if item.parameter not in existing_parameters:
-                trail.append(item)
-                if item.parameter:
-                    existing_parameters.add(item.parameter)
+        default_parameters = {
+            "mortgage_rate",
+            "property_tax_rate",
+            "annual_home_insurance_cents",
+            "annual_rent_growth_rate",
+            "buyer_closing_cost_rate",
+            "maintenance_rate",
+            "selling_cost_rate",
+            "annual_pmi_rate",
+            "loss_aversion_lambda",
+            "panic_sale_expected_return_penalty",
+        }
+        behavioral_parameters = {
+            "scenario_count",
+            "appreciation_stddev",
+        }
+        trail = [
+            item
+            for item in build_default_audit_trail()
+            if item.parameter in default_parameters
+        ]
+        trail.extend(
+            item
+            for item in build_behavioral_audit_trail()
+            if item.parameter in behavioral_parameters
+        )
         calibration = self._get_calibration(user_inputs)
         trail.extend([
             AssumptionAuditItem(
@@ -157,7 +178,11 @@ class RentVsBuyEngine:
                 name="Liquidity premium",
                 parameter="liquidity_premium_rate",
                 value=percentage(self._liquidity_premium_rate(user_inputs)),
-                source="Behavioral calibration",
+                source="Internal behavioral calibration; informed by Lustig & Van Nieuwerburgh (2005) housing liquidity research",
+                last_updated=date(2025, 1, 1),
+                notes=(
+                    "Annual implicit cost applied to home equity for the selected household income-stability profile."
+                ),
             ),
             AssumptionAuditItem(
                 name=f"Investment return volatility ({user_inputs.risk_profile.value} profile)",

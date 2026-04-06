@@ -10,6 +10,7 @@ import {
   saveRentVsBuyScenario,
 } from "./api";
 import type {
+  AuditTrailItem,
   AssumptionFormState,
   AssumptionOverridesPayload,
   CollegeVsRetirementFormState,
@@ -41,6 +42,10 @@ type LiveModuleId =
 
 type ModuleId = LiveModuleId | "debt-payoff-vs-invest";
 type ModulePhase = "input" | "result";
+type LaunchOptions = {
+  initialModule: ModuleId;
+  embedMode: boolean;
+};
 
 const modules: Array<{
   id: ModuleId;
@@ -79,6 +84,49 @@ const modules: Array<{
     description: "Next in line after the core family finance engines.",
   },
 ];
+
+function isModuleId(value: string | null | undefined): value is ModuleId {
+  return modules.some((module) => module.id === value);
+}
+
+function parseBooleanFlag(value: string | null | undefined): boolean | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function normalizeConfiguredModule(value: string | undefined): ModuleId {
+  return isModuleId(value) ? value : "rent-vs-buy";
+}
+
+function readLaunchOptions(): LaunchOptions {
+  const configuredModule = normalizeConfiguredModule(import.meta.env.VITE_DEFAULT_MODULE);
+  const configuredEmbedMode = parseBooleanFlag(import.meta.env.VITE_EMBED_MODE) ?? false;
+
+  if (typeof window === "undefined") {
+    return {
+      initialModule: configuredModule,
+      embedMode: configuredEmbedMode,
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedModule = params.get("module");
+  const requestedEmbedMode = parseBooleanFlag(params.get("embed"));
+
+  return {
+    initialModule: isModuleId(requestedModule) ? requestedModule : configuredModule,
+    embedMode: requestedEmbedMode ?? configuredEmbedMode,
+  };
+}
 
 const phaseLabels: Record<LiveModuleId, string[]> = {
   "rent-vs-buy": ["The home", "Your situation", "Your plans", "Tax & behavior"],
@@ -209,7 +257,7 @@ const defaultCollegeForm: CollegeVsRetirementFormState = {
 
 type AssumptionBaseline = {
   assumptionsSnapshot: Record<string, unknown>;
-  auditTrail: ReportAuditTrailRow[];
+  auditTrailSnapshot: AuditTrailItem[];
   assumptionForm: AssumptionFormState;
 };
 
@@ -360,12 +408,7 @@ function snapshotToAssumptionForm(snapshot: Record<string, unknown>): Assumption
 function currentAssumptionsToBaseline(payload: CurrentAssumptionsEnvelope): AssumptionBaseline {
   return {
     assumptionsSnapshot: payload.assumptions as unknown as Record<string, unknown>,
-    auditTrail: payload.audit_trail.map((item) => ({
-      label: item.name ?? item.parameter ?? "Assumption",
-      value: item.value ?? null,
-      source: item.source,
-      last_updated: item.last_updated ?? item.sourced_at ?? null,
-    })),
+    auditTrailSnapshot: payload.audit_trail.map((item) => ({ ...item })),
     assumptionForm: snapshotToAssumptionForm(payload.assumptions as unknown as Record<string, unknown>),
   };
 }
@@ -415,7 +458,7 @@ function buildRentReportRequest(
     simulation_seed: number;
     assumption_overrides?: AssumptionOverridesPayload;
     assumptions_snapshot?: Record<string, unknown>;
-    audit_trail_snapshot?: ReportAuditTrailRow[];
+    audit_trail_snapshot?: AuditTrailItem[];
   } = {
     input: buildRentPayload(form),
     simulation_seed: 7,
@@ -426,7 +469,7 @@ function buildRentReportRequest(
   }
   if (baseline) {
     payload.assumptions_snapshot = baseline.assumptionsSnapshot;
-    payload.audit_trail_snapshot = baseline.auditTrail;
+    payload.audit_trail_snapshot = baseline.auditTrailSnapshot;
   }
   return payload;
 }
@@ -478,12 +521,41 @@ function buildBandPath(
   return `M ${forward} L ${backward} Z`;
 }
 
-function openPrintDialog(): void {
-  window.print();
+function revokeObjectUrlLater(url: string): void {
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  revokeObjectUrlLater(url);
+}
+
+function openBlobPreview(blob: Blob, previewWindow?: Window | null): void {
+  const url = URL.createObjectURL(blob);
+  if (previewWindow && !previewWindow.closed) {
+    previewWindow.location.href = url;
+    previewWindow.focus?.();
+  } else {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+  revokeObjectUrlLater(url);
 }
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState<ModuleId>("rent-vs-buy");
+  const launchOptions = useMemo(() => readLaunchOptions(), []);
+  const [activeModule, setActiveModule] = useState<ModuleId>(launchOptions.initialModule);
   const [phases, setPhases] = useState<Record<LiveModuleId, ModulePhase>>({
     "rent-vs-buy": "input",
     "job-offer": "input",
@@ -524,6 +596,7 @@ export default function App() {
   const activePhase = activeLiveModule ? phases[activeLiveModule] : "input";
   const activeStep = activeLiveModule ? steps[activeLiveModule] : 0;
   const activeLoadingMessages = activeLiveModule ? loadingMessages[activeLiveModule] : [];
+  const isEmbedMode = launchOptions.embedMode;
   const currentBaseline = useMemo(
     () => (currentAssumptions ? currentAssumptionsToBaseline(currentAssumptions) : null),
     [currentAssumptions],
@@ -677,16 +750,30 @@ export default function App() {
         import("./ReportDocument"),
       ]);
       const blob = await pdf(<RentVsBuyReportDocument report={rentReportEnvelope.report} />).toBlob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `family-financial-compass-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `family-financial-compass-${new Date().toISOString().slice(0, 10)}.pdf`);
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleOpenRentPrintPdf() {
+    if (!rentReportEnvelope) {
+      return;
+    }
+    const previewWindow = window.open("", "_blank");
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { RentVsBuyReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(<RentVsBuyReportDocument report={rentReportEnvelope.report} />).toBlob();
+      openBlobPreview(blob, previewWindow);
+    } catch (error) {
+      previewWindow?.close();
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't open the printable PDF.");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -705,16 +792,32 @@ export default function App() {
       const blob = await pdf(
         <JobOfferReportDocument report={jobOfferReportEnvelope.report} />,
       ).toBlob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `family-financial-compass-job-offer-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `family-financial-compass-job-offer-${new Date().toISOString().slice(0, 10)}.pdf`);
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleOpenJobOfferPrintPdf() {
+    if (!jobOfferReportEnvelope) {
+      return;
+    }
+    const previewWindow = window.open("", "_blank");
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { JobOfferReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <JobOfferReportDocument report={jobOfferReportEnvelope.report} />,
+      ).toBlob();
+      openBlobPreview(blob, previewWindow);
+    } catch (error) {
+      previewWindow?.close();
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't open the printable PDF.");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -733,16 +836,32 @@ export default function App() {
       const blob = await pdf(
         <RetirementSurvivalReportDocument report={retirementReportEnvelope.report} />,
       ).toBlob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `family-financial-compass-retirement-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `family-financial-compass-retirement-${new Date().toISOString().slice(0, 10)}.pdf`);
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleOpenRetirementPrintPdf() {
+    if (!retirementReportEnvelope) {
+      return;
+    }
+    const previewWindow = window.open("", "_blank");
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { RetirementSurvivalReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <RetirementSurvivalReportDocument report={retirementReportEnvelope.report} />,
+      ).toBlob();
+      openBlobPreview(blob, previewWindow);
+    } catch (error) {
+      previewWindow?.close();
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't open the printable PDF.");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -761,16 +880,32 @@ export default function App() {
       const blob = await pdf(
         <CollegeVsRetirementReportDocument report={collegeReportEnvelope.report} />,
       ).toBlob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `family-financial-compass-college-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `family-financial-compass-college-${new Date().toISOString().slice(0, 10)}.pdf`);
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "We couldn't generate the PDF.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
+  async function handleOpenCollegePrintPdf() {
+    if (!collegeReportEnvelope) {
+      return;
+    }
+    const previewWindow = window.open("", "_blank");
+    setIsGeneratingPdf(true);
+    try {
+      const [{ pdf }, { CollegeVsRetirementReportDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./ReportDocument"),
+      ]);
+      const blob = await pdf(
+        <CollegeVsRetirementReportDocument report={collegeReportEnvelope.report} />,
+      ).toBlob();
+      openBlobPreview(blob, previewWindow);
+    } catch (error) {
+      previewWindow?.close();
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't open the printable PDF.");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -1486,7 +1621,7 @@ export default function App() {
       <section className="panel loading-panel">
         <PhaseRail currentPhase="result" step={0} steps={activeLiveModule ? phaseLabels[activeLiveModule] : []} />
         <header className="panel-header">
-          <span className="section-kicker">Phase 2 · Result</span>
+          <span className="section-kicker">Your result</span>
           <h2>Working through your numbers</h2>
           <p>This engine is doing real compute, not just waiting on a network response.</p>
         </header>
@@ -1518,7 +1653,7 @@ export default function App() {
         actions={
           <StickyActions
             onExplore={() => document.getElementById("explore-rent")?.scrollIntoView({ behavior: "smooth" })}
-            onPrint={openPrintDialog}
+            onPrint={handleOpenRentPrintPdf}
             onSave={handleSaveRentAnalysis}
             onDownloadPdf={handleDownloadRentPdf}
             isSaving={isSaving}
@@ -1528,7 +1663,7 @@ export default function App() {
         }
       >
         <VerdictCard
-          eyebrow="Phase 2 · Result"
+          eyebrow="Your result"
           title={report.narratives.summary}
           supporting={`How this model sees it over ${report.verdict.horizon_years.toFixed(1)} years.`}
         />
@@ -1563,7 +1698,7 @@ export default function App() {
           <WarningList warnings={report.questions.risk.warnings} />
         )}
         <NarrativeStack
-          title="How this model sees it"
+          title="The numbers explained"
           paragraphs={[report.narratives.verdict_driver, report.narratives.net_worth_summary]}
         />
         <NarrativeStack
@@ -1572,8 +1707,8 @@ export default function App() {
         />
         <section id="explore-rent" className="explore-block">
           <SectionHeader
-            title="Phase 3 · Explore"
-            description="The explore section shows where the answer comes from and how sensitive it is."
+            title="Full analysis"
+            description="Where the answer comes from and how sensitive it is to each assumption."
           />
           <ChartCard
             title="Projected net worth over time"
@@ -1657,14 +1792,14 @@ export default function App() {
         actions={
           <StickyActions
             onExplore={() => document.getElementById("explore-job")?.scrollIntoView({ behavior: "smooth" })}
-            onPrint={openPrintDialog}
+            onPrint={handleOpenJobOfferPrintPdf}
             onDownloadPdf={handleDownloadJobOfferPdf}
             isGeneratingPdf={isGeneratingPdf}
           />
         }
       >
         <VerdictCard
-          eyebrow="Phase 2 · Result"
+          eyebrow="Your result"
           title={report.narratives.summary}
           supporting="How this model sees the tradeoff between compensation, friction, and uncertainty."
         />
@@ -1697,7 +1832,7 @@ export default function App() {
         />
         {warnings.length > 0 && <WarningList warnings={warnings} />}
         <NarrativeStack
-          title="How this model sees it"
+          title="The numbers explained"
           paragraphs={[report.narratives.offer_comparison, report.narratives.break_even_summary]}
         />
         <NarrativeStack
@@ -1706,8 +1841,8 @@ export default function App() {
         />
         <section id="explore-job" className="explore-block">
           <SectionHeader
-            title="Phase 3 · Explore"
-            description="This is where the hidden costs and sensitivity become visible."
+            title="Full analysis"
+            description="Hidden costs, year-by-year comparison, and sensitivity to each assumption."
           />
           <ChartCard
             title="Cumulative value over time"
@@ -1785,7 +1920,7 @@ export default function App() {
         actions={
           <StickyActions
             onExplore={() => document.getElementById("explore-retirement")?.scrollIntoView({ behavior: "smooth" })}
-            onPrint={openPrintDialog}
+            onPrint={handleOpenRetirementPrintPdf}
             onDownloadPdf={handleDownloadRetirementPdf}
             isGeneratingPdf={isGeneratingPdf}
           />
@@ -1797,7 +1932,7 @@ export default function App() {
           </InlineNotice>
         )}
         <VerdictCard
-          eyebrow="Phase 2 · Result"
+          eyebrow="Your result"
           title={report.narratives.summary}
           supporting="How this model sees the odds that your portfolio lasts."
         />
@@ -1830,7 +1965,7 @@ export default function App() {
         />
         {report.warnings.length > 0 && <WarningList warnings={report.warnings} />}
         <NarrativeStack
-          title="How this model sees it"
+          title="The numbers explained"
           paragraphs={[report.narratives.survival_verdict, report.narratives.withdrawal_rate_summary]}
         />
         <NarrativeStack
@@ -1839,7 +1974,7 @@ export default function App() {
         />
         <section id="explore-retirement" className="explore-block">
           <SectionHeader
-            title="Phase 3 · Explore"
+            title="Full analysis"
             description="The fan chart below shows how wide the range of retirement outcomes can get."
           />
           <ChartCard
@@ -1886,14 +2021,14 @@ export default function App() {
         actions={
           <StickyActions
             onExplore={() => document.getElementById("explore-college")?.scrollIntoView({ behavior: "smooth" })}
-            onPrint={openPrintDialog}
+            onPrint={handleOpenCollegePrintPdf}
             onDownloadPdf={handleDownloadCollegePdf}
             isGeneratingPdf={isGeneratingPdf}
           />
         }
       >
         <VerdictCard
-          eyebrow="Phase 2 · Result"
+          eyebrow="Your result"
           title={report.narratives.summary}
           supporting="How this model sees the tradeoff between student debt and retirement compounding."
         />
@@ -1926,7 +2061,7 @@ export default function App() {
         />
         {report.warnings.length > 0 && <WarningList warnings={report.warnings} />}
         <NarrativeStack
-          title="How this model sees it"
+          title="The numbers explained"
           paragraphs={[report.narratives.allocation_verdict, report.narratives.loan_impact_summary]}
         />
         <NarrativeStack
@@ -1935,8 +2070,8 @@ export default function App() {
         />
         <section id="explore-college" className="explore-block">
           <SectionHeader
-            title="Phase 3 · Explore"
-            description="This view keeps both goals visible at the same time so the tradeoff stays honest."
+            title="Full analysis"
+            description="Both goals stay visible at the same time so the tradeoff stays honest."
           />
           <TwoColumnOutcomeCard
             leftTitle="College first"
@@ -2011,39 +2146,53 @@ export default function App() {
     return renderInputPhase();
   }
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="section-kicker">Family Financial Compass</span>
-          <h1>Clarity for the biggest family decisions.</h1>
-          <p>
-            Each tool is a decision workspace: guided inputs first, then a result you can trust,
-            then the numbers underneath it.
-          </p>
-        </div>
-        <nav className="module-list" aria-label="Family finance tools">
-          {modules.map((module) => (
-            <button
-              key={module.id}
-              type="button"
-              className={`module-card${module.id === activeModule ? " module-card--active" : ""}`}
-              onClick={() => {
-                setActiveModule(module.id);
-                setErrorMessage(null);
-                setSaveMessage(null);
-              }}
-            >
-              <span className="module-card__status">{module.status === "live" ? "Live" : "Queued"}</span>
-              <strong>{module.label}</strong>
-              <span>{module.description}</span>
-            </button>
-          ))}
-        </nav>
-      </aside>
+  function renderModuleNavigation(compact = false) {
+    return (
+      <nav
+        className={`module-list${compact ? " module-list--compact" : ""}`}
+        aria-label="Family finance tools"
+      >
+        {modules.map((module) => (
+          <button
+            key={module.id}
+            type="button"
+            className={`module-card${module.id === activeModule ? " module-card--active" : ""}${
+              compact ? " module-card--compact" : ""
+            }`}
+            onClick={() => {
+              setActiveModule(module.id);
+              setErrorMessage(null);
+              setSaveMessage(null);
+            }}
+          >
+            <span className="module-card__status">{module.status === "live" ? "Live" : "Queued"}</span>
+            <strong>{module.label}</strong>
+            <span>{module.description}</span>
+          </button>
+        ))}
+      </nav>
+    );
+  }
 
-      <main className="workspace">
-        <header className="workspace-header">
+  return (
+    <div className={`app-shell${isEmbedMode ? " app-shell--embed" : ""}`}>
+      {!isEmbedMode && (
+        <aside className="sidebar">
+          <div className="brand">
+            <span className="section-kicker">Family Financial Compass</span>
+            <h1>Clarity for the biggest family decisions.</h1>
+            <p>
+              Each tool is a decision workspace: guided inputs first, then a result you can trust,
+              then the numbers underneath it.
+            </p>
+          </div>
+          {renderModuleNavigation()}
+        </aside>
+      )}
+
+      <main className={`workspace${isEmbedMode ? " workspace--embed" : ""}`}>
+        {isEmbedMode && renderModuleNavigation(true)}
+        <header className={`workspace-header${isEmbedMode ? " workspace-header--embed" : ""}`}>
           <div>
             <span className="section-kicker">
               {activeMeta.status === "live" ? "Decision workspace" : "Queued"}
@@ -2541,7 +2690,7 @@ function StickyActions({
         See full analysis
       </button>
       <button type="button" className="button button--secondary" onClick={onPrint}>
-        Print / Save as PDF
+        Open printable PDF
       </button>
       {onSave && (
         <button type="button" className="button button--secondary" onClick={onSave} disabled={isSaving}>
@@ -2550,7 +2699,7 @@ function StickyActions({
       )}
       {onDownloadPdf && (
         <button type="button" className="button button--primary" onClick={onDownloadPdf} disabled={isGeneratingPdf}>
-          {isGeneratingPdf ? "Building PDF..." : "Formal PDF"}
+          {isGeneratingPdf ? "Building PDF..." : "Download PDF"}
         </button>
       )}
       {saveLabel && <span className="sticky-actions__note">{saveLabel}</span>}
@@ -2586,7 +2735,7 @@ function AuditSheet({
         </div>
         <div className="audit-sheet__body">
           {rows.map((row) => (
-            <article key={`${row.label}-${row.source}`} className="audit-row">
+            <article key={`${row.parameter ?? row.label}-${row.source}`} className="audit-row">
               <div className="audit-row__top">
                 <strong>{row.label}</strong>
                 <span>{row.value === null ? "—" : String(row.value)}</span>

@@ -12,4 +12,11 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+.codex-gcloud-login.py
+.gcloud-auth-bridge/
+.local-run-logs/
+jali-work/
+lead-hub-work/
+response.txt
+retirement-response.json
     

@@ -572,6 +572,7 @@ def test_college_audit_trail_is_complete() -> None:
         "college_student_loan_rate",
         "college_student_loan_term_years",
         "college_vs_retirement_return_volatility",
+        "retirement_return_autocorrelation",
         "loss_aversion_lambda",
         "scenario_count",
     } <= parameters

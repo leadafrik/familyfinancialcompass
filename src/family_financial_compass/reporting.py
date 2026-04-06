@@ -66,10 +66,13 @@ def _serialize_audit_trail(
 ) -> list[dict[str, object]]:
     return [
         {
+            "parameter": item.parameter,
+            "name": item.name,
             "label": item.name or item.parameter or "assumption",
             "value": _audit_display_value(item.value),
             "source": item.source,
             "last_updated": item.last_updated.isoformat() if item.last_updated else item.sourced_at,
+            "notes": item.notes,
         }
         for item in audit_trail
     ]
@@ -96,6 +99,20 @@ def _merge_audit_trails(
             positions[item.parameter] = len(merged)
         merged.append(item)
     return merged
+
+
+def _ordered_audit_trail(
+    audit_trail: list[AssumptionAuditItem] | tuple[AssumptionAuditItem, ...],
+    ordered_parameters: tuple[str, ...],
+) -> list[AssumptionAuditItem]:
+    positions = {parameter: index for index, parameter in enumerate(ordered_parameters)}
+    selected = [
+        item
+        for item in audit_trail
+        if item.parameter and item.parameter in positions
+    ]
+    selected.sort(key=lambda item: positions[item.parameter or ""])
+    return selected
 
 
 def _exclusion_cents(user_inputs: UserScenarioInput) -> int:
@@ -244,11 +261,16 @@ def _fallback_rent_vs_buy_narratives(report_context: dict[str, object]) -> dict[
         "question_liquidity": (
             f"After the down payment and estimated closing costs, you retain {questions['liquidity']['remaining_savings_label']}. "
             f"Three months of income is roughly {questions['liquidity']['buffer_threshold_label']}."
+            + (
+                f" Remaining savings would fall below that buffer, which is worth factoring into timing."
+                if questions['liquidity']['remaining_savings_cents'] < questions['liquidity']['buffer_threshold_cents']
+                else ""
+            )
         ),
         "question_risk": (
-            f"The model flags {questions['risk']['warning_count']} warning item(s). "
+            f"The model flagged {questions['risk']['warning_count']} {'warning' if questions['risk']['warning_count'] == 1 else 'warnings'}. "
             f"{questions['risk']['lead_warning']}"
-        ),
+        ) if questions['risk']['warning_count'] > 0 else "No model warnings were triggered for these inputs.",
         "summary": (
             f"{verdict['winner_label']} is the descriptive base-case result at your chosen horizon. "
             f"Buying wins in {_format_percent(verdict['probability_buy_beats_rent'])} of modeled futures, "
@@ -261,13 +283,42 @@ def _fallback_retirement_narratives(report_context: dict[str, object]) -> dict[s
     verdict = report_context["verdict"]
     questions = report_context["questions"]
     wealth = report_context["wealth_spread"]
+    withdrawal_gap = questions["withdrawal_rate"]["gap"]
+    safe_annual = questions["withdrawal_rate"]["safe_annual_cents"]
+    annual_gap = questions["withdrawal_rate"]["gap_cents"]
+    if verdict["survives"] >= 0.9 and withdrawal_gap >= 0:
+        summary = (
+            f"The plan clears the {verdict['horizon_years']}-year horizon with a wide modeled cushion. "
+            f"The planned withdrawal rate stays at or below the modeled 95% safe rate."
+        )
+    elif verdict["survives"] >= 0.75:
+        summary = (
+            f"The plan reaches year {verdict['horizon_years']} in most modeled futures, but the margin is limited. "
+            f"The planned withdrawal rate sits above the modeled 95% safe rate."
+        )
+    elif verdict["survives"] >= 0.5:
+        summary = (
+            f"The plan works in some modeled futures but shows meaningful depletion risk before year {verdict['horizon_years']}. "
+            f"The withdrawal rate is above the modeled 95% safe rate."
+        )
+    else:
+        summary = (
+            f"The plan shows high depletion risk before year {verdict['horizon_years']} under the modeled assumptions. "
+            f"The withdrawal rate is materially above the modeled 95% safe rate."
+        )
     return {
         "survival_verdict": (
-            f"The portfolio survives through year {verdict['horizon_years']} in {_format_percent(verdict['survives'])} of simulated futures."
+            f"The portfolio remains above zero through year {verdict['horizon_years']} in {_format_percent(verdict['survives'])} of simulated futures. "
+            + (
+                "The deterministic path does not exhaust the portfolio inside the modeled horizon."
+                if verdict["deterministic_depletion_year"] is None
+                else f"In the deterministic path, depletion occurs in year {verdict['deterministic_depletion_year']}."
+            )
         ),
         "withdrawal_rate_summary": (
-            f"Your current withdrawal rate is {_format_percent(questions['withdrawal_rate']['current_rate'], 2)}, "
-            f"while the modeled 95% safe rate is {_format_percent(questions['withdrawal_rate']['safe_rate_95'], 2)}."
+            f"The planned net withdrawal rate is {_format_percent(questions['withdrawal_rate']['current_rate'], 2)}, "
+            f"while the modeled 95% safe rate is {_format_percent(questions['withdrawal_rate']['safe_rate_95'], 2)}. "
+            f"That maps to a modeled safe annual draw of {_format_currency(safe_annual)} and a gap of {_format_currency(annual_gap)} versus the current plan."
         ),
         "wealth_range_summary": (
             f"Terminal wealth ranges from about {_format_currency(wealth['p10_terminal_cents'])} in the downside case "
@@ -275,13 +326,10 @@ def _fallback_retirement_narratives(report_context: dict[str, object]) -> dict[s
             f"{_format_currency(wealth['median_terminal_cents'])}."
         ),
         "risk_summary": (
-            f"The model flags {questions['risk']['warning_count']} warning item(s). "
+            f"The model flagged {questions['risk']['warning_count']} {'warning' if questions['risk']['warning_count'] == 1 else 'warnings'}. "
             f"{questions['risk']['lead_warning']}"
-        ),
-        "summary": (
-            f"The retirement plan is modeled over {verdict['horizon_years']} years, with a deterministic depletion year of "
-            f"{verdict['deterministic_depletion_year'] or 'none'}. The survival result is descriptive, not a guarantee."
-        ),
+        ) if questions['risk']['warning_count'] > 0 else "No model warnings were triggered for these inputs.",
+        "summary": summary,
     }
 
 
@@ -392,6 +440,59 @@ def _sensitivity_entries(
     return rows
 
 
+RENT_VS_BUY_AUDIT_PARAMETERS = (
+    "mortgage_rate",
+    "property_tax_rate",
+    "annual_home_insurance_cents",
+    "annual_rent_growth_rate",
+    "buyer_closing_cost_rate",
+    "maintenance_rate",
+    "selling_cost_rate",
+    "annual_pmi_rate",
+    "loss_aversion_lambda",
+    "panic_sale_expected_return_penalty",
+    "scenario_count",
+    "appreciation_stddev",
+    "expected_home_appreciation_rate",
+    "expected_investment_return_rate",
+    "liquidity_premium_rate",
+    "investment_return_volatility",
+)
+
+RETIREMENT_AUDIT_PARAMETERS = (
+    "loss_aversion_lambda",
+    "panic_sale_expected_return_penalty",
+    "scenario_count",
+    "expected_annual_return_rate",
+    "retirement_return_volatility",
+    "retirement_return_autocorrelation",
+)
+
+JOB_OFFER_AUDIT_PARAMETERS = (
+    "loss_aversion_lambda",
+    "scenario_count",
+    "job_offer_marginal_tax_rate",
+    "job_offer_bonus_market_beta",
+    "job_offer_equity_market_beta",
+    "offer_a_bonus_volatility",
+    "offer_a_equity_volatility",
+    "offer_b_bonus_volatility",
+    "offer_b_equity_volatility",
+)
+
+COLLEGE_AUDIT_PARAMETERS = (
+    "loss_aversion_lambda",
+    "panic_sale_expected_return_penalty",
+    "scenario_count",
+    "expected_annual_return_rate",
+    "retirement_return_autocorrelation",
+    "college_tuition_inflation_rate",
+    "college_student_loan_rate",
+    "college_student_loan_term_years",
+    "college_vs_retirement_return_volatility",
+)
+
+
 def _job_offer_sensitivity_entries(
     engine: JobOfferEngine,
     user_inputs: JobOfferScenarioInput,
@@ -458,6 +559,7 @@ def build_rent_vs_buy_report(
         analysis.audit_trail,
         prefer_extra_parameters={"liquidity_premium_rate"},
     )
+    report_audit_trail = _ordered_audit_trail(report_audit_trail, RENT_VS_BUY_AUDIT_PARAMETERS)
     paths = engine._monthly_paths(
         user_inputs=user_inputs,
         annual_investment_return=engine._effective_investment_return(user_inputs),
@@ -568,6 +670,8 @@ def build_rent_vs_buy_report(
             "liquidity": {
                 "remaining_savings_label": _format_currency(remaining_savings_cents),
                 "buffer_threshold_label": _format_currency(buffer_threshold_cents),
+                "remaining_savings_cents": remaining_savings_cents,
+                "buffer_threshold_cents": buffer_threshold_cents,
             },
             "risk": {
                 "warning_count": len(analysis.warnings),
@@ -685,7 +789,10 @@ def build_retirement_survival_report(
     groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions",
 ) -> dict[str, object]:
     analysis = engine.analyze(user_inputs, seed=seed)
-    report_audit_trail = _merge_audit_trails(audit_trail, analysis.audit_trail)
+    report_audit_trail = _ordered_audit_trail(
+        _merge_audit_trails(audit_trail, analysis.audit_trail),
+        RETIREMENT_AUDIT_PARAMETERS,
+    )
     safe_withdrawal_annual_cents = int(round(analysis.monte_carlo.safe_withdrawal_rate_95 * user_inputs.current_portfolio_cents))
     safe_withdrawal_gap_cents = safe_withdrawal_annual_cents - analysis.deterministic.net_annual_withdrawal_cents
 
@@ -701,6 +808,8 @@ def build_retirement_survival_report(
                 "current_rate": analysis.deterministic.current_withdrawal_rate,
                 "safe_rate_95": analysis.monte_carlo.safe_withdrawal_rate_95,
                 "gap": analysis.monte_carlo.safe_withdrawal_rate_95 - analysis.deterministic.current_withdrawal_rate,
+                "safe_annual_cents": safe_withdrawal_annual_cents,
+                "gap_cents": safe_withdrawal_gap_cents,
             },
             "risk": {
                 "warning_count": len(analysis.warnings),
@@ -797,7 +906,10 @@ def build_job_offer_report(
     groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions",
 ) -> dict[str, object]:
     analysis = engine.analyze(user_inputs, seed=seed)
-    report_audit_trail = _merge_audit_trails(audit_trail, analysis.audit_trail)
+    report_audit_trail = _ordered_audit_trail(
+        _merge_audit_trails(audit_trail, analysis.audit_trail),
+        JOB_OFFER_AUDIT_PARAMETERS,
+    )
     winner_label = user_inputs.offer_b.label if analysis.deterministic.end_of_horizon_advantage_cents >= 0 else user_inputs.offer_a.label
     offer_a_sign_on_net = int(round(user_inputs.offer_a.sign_on_bonus_cents * (1.0 - user_inputs.marginal_tax_rate)))
     offer_b_sign_on_net = int(round(user_inputs.offer_b.sign_on_bonus_cents * (1.0 - user_inputs.marginal_tax_rate)))
@@ -948,7 +1060,10 @@ def build_college_vs_retirement_report(
     groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions",
 ) -> dict[str, object]:
     analysis = engine.analyze(user_inputs, seed=seed)
-    report_audit_trail = _merge_audit_trails(audit_trail, analysis.audit_trail)
+    report_audit_trail = _ordered_audit_trail(
+        _merge_audit_trails(audit_trail, analysis.audit_trail),
+        COLLEGE_AUDIT_PARAMETERS,
+    )
     college_first_payment_cents = _loan_payment(
         analysis.deterministic.college_first_total_loan_cents,
         engine.assumptions.college_student_loan_rate,
