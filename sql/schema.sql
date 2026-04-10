@@ -94,13 +94,14 @@ create table if not exists scenarios (
     inputs_snapshot jsonb not null,
     assumptions_snapshot jsonb not null,
     model_version text not null,
-    check (module in ('rent_vs_buy'))
+    check (module in ('rent_vs_buy', 'retirement_survival', 'job_offer', 'college_vs_retirement'))
 );
 
 create table if not exists scenario_outputs (
     scenario_id uuid primary key references scenarios(id) on delete cascade,
     computed_at timestamptz not null default now(),
     output_blob jsonb not null,
+    -- rent_vs_buy summary columns (nullable for other modules)
     probability_buy_beats_rent double precision,
     median_terminal_advantage_cents bigint,
     median_break_even_month integer

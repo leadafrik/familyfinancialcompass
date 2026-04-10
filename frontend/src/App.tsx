@@ -7,7 +7,11 @@ import {
   buildRentVsBuyReport,
   buildRetirementSurvivalReport,
   getCurrentRentVsBuyAssumptions,
+  listScenarios,
+  saveCollegeVsRetirementScenario,
+  saveJobOfferScenario,
   saveRentVsBuyScenario,
+  saveRetirementSurvivalScenario,
 } from "./api";
 import type {
   AuditTrailItem,
@@ -31,6 +35,7 @@ import type {
   RetirementInputPayload,
   RetirementSurvivalReport,
   RentVsBuyInputPayload,
+  ScenarioEnvelope,
   RentVsBuyReport,
 } from "./types";
 
@@ -127,6 +132,8 @@ function readLaunchOptions(): LaunchOptions {
     embedMode: requestedEmbedMode ?? configuredEmbedMode,
   };
 }
+
+const SAVED_ANALYSES_ENABLED = parseBooleanFlag(import.meta.env.VITE_ENABLE_SAVED_ANALYSES) ?? false;
 
 const phaseLabels: Record<LiveModuleId, string[]> = {
   "rent-vs-buy": ["The home", "Your situation", "Your plans", "Tax & behavior"],
@@ -474,6 +481,17 @@ function buildRentReportRequest(
   return payload;
 }
 
+/** Stable per-browser anonymous user id — persisted in localStorage so a
+ *  returning visitor's scenarios stay scoped to them and not mixed with others. */
+function getOrCreateUserId(): string {
+  const key = "ffc_user_id";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const id = `anon_${crypto.randomUUID()}`;
+  localStorage.setItem(key, id);
+  return id;
+}
+
 function buildScenarioPayload(
   form: FormState,
   assumptionForm: AssumptionFormState,
@@ -481,7 +499,7 @@ function buildScenarioPayload(
 ): CreateScenarioPayload {
   return {
     ...buildRentReportRequest(form, assumptionForm, baseline),
-    user_id: "anonymous",
+    user_id: getOrCreateUserId(),
     idempotency_key: crypto.randomUUID(),
   };
 }
@@ -588,6 +606,10 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [savedDrawerOpen, setSavedDrawerOpen] = useState(false);
+  const [savedScenarios, setSavedScenarios] = useState<ScenarioEnvelope[] | null>(null);
+  const [savedScenariosLoading, setSavedScenariosLoading] = useState(false);
+  const [savedScenariosError, setSavedScenariosError] = useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [auditSheet, setAuditSheet] = useState<{ title: string; rows: ReportAuditTrailRow[] } | null>(null);
 
@@ -689,10 +711,21 @@ export default function App() {
   async function handleRunRetirement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
+    const retirementPayload = buildRetirementPayload(retirementForm);
+    const portfolio = retirementPayload.current_portfolio_cents;
+    const spending = retirementPayload.annual_spending_cents;
+    const guaranteed = retirementPayload.annual_guaranteed_income_cents ?? 0;
+    const netSpending = Math.max(0, spending - guaranteed);
+    if (portfolio > 0 && netSpending / portfolio > 0.10) {
+      setErrorMessage(
+        "The net withdrawal rate exceeds 10% of the portfolio — this scenario is very likely to run out of funds. Check your spending and income inputs before continuing.",
+      );
+      return;
+    }
     setIsLoading(true);
     try {
       const report = await buildRetirementSurvivalReport({
-        input: buildRetirementPayload(retirementForm),
+        input: retirementPayload,
         simulation_seed: 7,
       });
       startTransition(() => {
@@ -709,10 +742,20 @@ export default function App() {
   async function handleRunCollege(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
+    const collegePayload = buildCollegePayload(collegeForm);
+    if (
+      collegePayload.current_retirement_savings_cents === 0 &&
+      collegePayload.annual_savings_budget_cents === 0
+    ) {
+      setErrorMessage(
+        "Enter either a current retirement savings balance or an annual savings budget — the comparison requires at least one non-zero savings input.",
+      );
+      return;
+    }
     setIsLoading(true);
     try {
       const report = await buildCollegeVsRetirementReport({
-        input: buildCollegePayload(collegeForm),
+        input: collegePayload,
         simulation_seed: 7,
       });
       startTransition(() => {
@@ -731,11 +774,82 @@ export default function App() {
     setIsSaving(true);
     try {
       await saveRentVsBuyScenario(buildScenarioPayload(rentForm, assumptionForm, currentBaseline));
-      setSaveMessage("Analysis saved. You can come back to this housing scenario later.");
+      setSaveMessage("Analysis saved. You can return to this scenario via your saved analyses.");
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "We couldn't save this analysis.");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleSaveRetirementAnalysis() {
+    setSaveMessage(null);
+    setIsSaving(true);
+    try {
+      await saveRetirementSurvivalScenario({
+        input: buildRetirementPayload(retirementForm),
+        simulation_seed: 7,
+        user_id: getOrCreateUserId(),
+        idempotency_key: crypto.randomUUID(),
+      });
+      setSaveMessage("Analysis saved. You can return to this scenario via your saved analyses.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't save this analysis.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSaveJobOfferAnalysis() {
+    setSaveMessage(null);
+    setIsSaving(true);
+    try {
+      await saveJobOfferScenario({
+        input: buildJobOfferPayload(jobOfferForm),
+        simulation_seed: 7,
+        user_id: getOrCreateUserId(),
+        idempotency_key: crypto.randomUUID(),
+      });
+      setSaveMessage("Analysis saved. You can return to this scenario via your saved analyses.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't save this analysis.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSaveCollegeAnalysis() {
+    setSaveMessage(null);
+    setIsSaving(true);
+    try {
+      await saveCollegeVsRetirementScenario({
+        input: buildCollegePayload(collegeForm),
+        simulation_seed: 7,
+        user_id: getOrCreateUserId(),
+        idempotency_key: crypto.randomUUID(),
+      });
+      setSaveMessage("Analysis saved. You can return to this scenario via your saved analyses.");
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "We couldn't save this analysis.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleOpenSavedDrawer() {
+    if (!SAVED_ANALYSES_ENABLED) {
+      return;
+    }
+    setSavedDrawerOpen(true);
+    setSavedScenariosError(null);
+    setSavedScenariosLoading(true);
+    try {
+      const page = await listScenarios(getOrCreateUserId());
+      setSavedScenarios(page.items);
+    } catch (error) {
+      setSavedScenariosError(error instanceof Error ? error.message : "Couldn't load saved analyses.");
+    } finally {
+      setSavedScenariosLoading(false);
     }
   }
 
@@ -1654,11 +1768,11 @@ export default function App() {
           <StickyActions
             onExplore={() => document.getElementById("explore-rent")?.scrollIntoView({ behavior: "smooth" })}
             onPrint={handleOpenRentPrintPdf}
-            onSave={handleSaveRentAnalysis}
+            onSave={SAVED_ANALYSES_ENABLED ? handleSaveRentAnalysis : undefined}
             onDownloadPdf={handleDownloadRentPdf}
             isSaving={isSaving}
             isGeneratingPdf={isGeneratingPdf}
-            saveLabel={saveMessage}
+            saveLabel={SAVED_ANALYSES_ENABLED ? saveMessage : null}
           />
         }
       >
@@ -1794,7 +1908,10 @@ export default function App() {
             onExplore={() => document.getElementById("explore-job")?.scrollIntoView({ behavior: "smooth" })}
             onPrint={handleOpenJobOfferPrintPdf}
             onDownloadPdf={handleDownloadJobOfferPdf}
+            onSave={SAVED_ANALYSES_ENABLED ? handleSaveJobOfferAnalysis : undefined}
+            isSaving={isSaving}
             isGeneratingPdf={isGeneratingPdf}
+            saveLabel={SAVED_ANALYSES_ENABLED ? saveMessage : null}
           />
         }
       >
@@ -1922,7 +2039,10 @@ export default function App() {
             onExplore={() => document.getElementById("explore-retirement")?.scrollIntoView({ behavior: "smooth" })}
             onPrint={handleOpenRetirementPrintPdf}
             onDownloadPdf={handleDownloadRetirementPdf}
+            onSave={SAVED_ANALYSES_ENABLED ? handleSaveRetirementAnalysis : undefined}
+            isSaving={isSaving}
             isGeneratingPdf={isGeneratingPdf}
+            saveLabel={SAVED_ANALYSES_ENABLED ? saveMessage : null}
           />
         }
       >
@@ -2023,7 +2143,10 @@ export default function App() {
             onExplore={() => document.getElementById("explore-college")?.scrollIntoView({ behavior: "smooth" })}
             onPrint={handleOpenCollegePrintPdf}
             onDownloadPdf={handleDownloadCollegePdf}
+            onSave={SAVED_ANALYSES_ENABLED ? handleSaveCollegeAnalysis : undefined}
+            isSaving={isSaving}
             isGeneratingPdf={isGeneratingPdf}
+            saveLabel={SAVED_ANALYSES_ENABLED ? saveMessage : null}
           />
         }
       >
@@ -2152,7 +2275,7 @@ export default function App() {
         className={`module-list${compact ? " module-list--compact" : ""}`}
         aria-label="Family finance tools"
       >
-        {modules.map((module) => (
+        {modules.filter((module) => module.status === "live").map((module) => (
           <button
             key={module.id}
             type="button"
@@ -2165,7 +2288,7 @@ export default function App() {
               setSaveMessage(null);
             }}
           >
-            <span className="module-card__status">{module.status === "live" ? "Live" : "Queued"}</span>
+            <span className="module-card__status">Live</span>
             <strong>{module.label}</strong>
             <span>{module.description}</span>
           </button>
@@ -2187,6 +2310,15 @@ export default function App() {
             </p>
           </div>
           {renderModuleNavigation()}
+          {SAVED_ANALYSES_ENABLED && (
+            <button
+              type="button"
+              className="button button--secondary sidebar__saved-btn"
+              onClick={handleOpenSavedDrawer}
+            >
+              Saved analyses
+            </button>
+          )}
         </aside>
       )}
 
@@ -2210,6 +2342,64 @@ export default function App() {
         open={auditSheet !== null}
         onClose={() => setAuditSheet(null)}
       />
+
+      {SAVED_ANALYSES_ENABLED && savedDrawerOpen && (
+        <div className="audit-sheet-backdrop" onClick={() => setSavedDrawerOpen(false)}>
+          <aside className="audit-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="audit-sheet__header">
+              <h3>Saved analyses</h3>
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setSavedDrawerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="audit-sheet__body">
+              {savedScenariosLoading && <p className="muted-block">Loading…</p>}
+              {savedScenariosError && <p className="muted-block">{savedScenariosError}</p>}
+              {savedScenarios !== null && !savedScenariosLoading && savedScenarios.length === 0 && (
+                <p className="muted-block">No saved analyses yet. Run an analysis and click "Save analysis" to store it here.</p>
+              )}
+              {savedScenarios !== null && savedScenarios.length > 0 && (
+                <ol className="audit-trail__list">
+                  {savedScenarios.map((scenario) => {
+                    const moduleLabel: Record<string, string> = {
+                      rent_vs_buy: "Rent vs Buy",
+                      retirement_survival: "Retirement Survival",
+                      job_offer: "Job Offer",
+                      college_vs_retirement: "College vs Retirement",
+                    };
+                    const savedDate = new Date(scenario.created_at).toLocaleDateString("en-US", {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    });
+                    return (
+                      <li key={scenario.scenario_id} className="audit-trail__item">
+                        <strong>{moduleLabel[scenario.module] ?? scenario.module}</strong>
+                        <span className="muted-block">Saved {savedDate} · v{scenario.model_version}</span>
+                        <button
+                          type="button"
+                          className="button button--secondary"
+                          onClick={() => {
+                            const moduleId = scenario.module.replace(/_/g, "-") as LiveModuleId;
+                            setActiveModule(moduleId);
+                            setSavedDrawerOpen(false);
+                          }}
+                        >
+                          Go to {moduleLabel[scenario.module] ?? scenario.module}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

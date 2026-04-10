@@ -66,6 +66,7 @@ Endpoints:
 
 Environment variables:
 
+- `FFC_ENV`: set to `production` for production safety checks
 - `FFC_HOST`: bind host, default `0.0.0.0`
 - `FFC_PORT`: bind port, default `8000`
 - `FFC_SCENARIO_STORE_BACKEND`: `file` or `postgres`
@@ -77,16 +78,19 @@ Environment variables:
 - `FFC_ASSUMPTIONS_CACHE_TTL_DAYS`: refresh cadence for live online assumptions, default `1`
 - `FFC_DEFAULT_USER_ID`: fallback scenario owner, default `anonymous`
 - `FFC_ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS
+- `FFC_API_KEY`: shared API key that protects private scenario save/load routes; required when `FFC_ENV=production`
 - `GROQ_API_KEY`: optional Groq API key for report narrative generation
 - `GROQ_MODEL`: optional Groq model name, default `openai/gpt-oss-20b`
 - `GROQ_API_BASE_URL`: optional Groq OpenAI-compatible endpoint override
 
-The app loads values from a root-level `.env` file automatically. Edit [`.env`](C:/Users/gordo/Economics%20Decisions%20Engine/.env) and set:
+The app loads values from a root-level `.env` file automatically. Start from [`.env.example`](C:/Users/gordo/Economics%20Decisions%20Engine/.env.example), copy it to [`.env`](C:/Users/gordo/Economics%20Decisions%20Engine/.env), and set:
 
+- `FFC_ENV=production`
 - `FFC_SCENARIO_STORE_BACKEND=postgres`
 - `FFC_DATABASE_URL=<your Neon direct connection string>`
+- `FFC_API_KEY=<your generated shared secret>`
 
-Assumptions are now runtime-dynamic when the API runs on Postgres. The service caches a resolved rent-vs-buy assumption set in Postgres for one day, refreshes mortgage and BLS rent/insurance defaults from public sources when the cache is stale, and falls back to [config/system_assumptions.json](C:/Users/gordo/Economics%20Decisions%20Engine/config/system_assumptions.json) if the live fetch fails. Saved scenarios still persist their resolved assumption snapshot, so historical results do not drift.
+Assumptions are now runtime-dynamic when the API runs on Postgres. The service caches a resolved rent-vs-buy assumption set in Postgres for one day, refreshes mortgage and BLS rent/insurance defaults from public sources when the cache is stale, and falls back to [config/system_assumptions.json](C:/Users/gordo/Economics%20Decisions%20Engine/config/system_assumptions.json) if the live fetch fails. Protected saved scenarios still persist their resolved assumption snapshot, so historical results do not drift.
 
 ## Docker
 
@@ -105,7 +109,17 @@ npm install
 npm run dev
 ```
 
-The Vite dev server proxies `/api` to the deployed Cloud Run backend by default. To point the UI at a different API base, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_BASE_URL`.
+The Vite dev server proxies `/api` to the deployed Cloud Run backend by default. To point the UI at a different API base, copy [`frontend/.env.example`](C:/Users/gordo/Economics%20Decisions%20Engine/frontend/.env.example) to [`frontend/.env`](C:/Users/gordo/Economics%20Decisions%20Engine/frontend/.env) and set `VITE_API_BASE_URL`.
+
+Frontend environment variables:
+
+- `VITE_API_BASE_URL`: API origin or same-origin path the browser should call
+- `VITE_APP_BASE_PATH`: frontend base path
+- `VITE_EMBED_MODE`: compact embedded layout toggle
+- `VITE_DEFAULT_MODULE`: default calculator to open
+- `VITE_ENABLE_SAVED_ANALYSES`: enables the private/internal saved-analysis UI; default `false`
+
+Only set `VITE_API_KEY` for private/internal builds where you explicitly enable saved analyses. Do not ship `VITE_API_KEY` in a public browser build.
 
 To mount the calculator under an existing site such as `leadafrik.com`, you can also set:
 
@@ -126,10 +140,19 @@ copy .env.example .env
 # VITE_APP_BASE_PATH=/calculator/
 # VITE_EMBED_MODE=true
 # VITE_API_BASE_URL=/calculator-api
+# VITE_ENABLE_SAVED_ANALYSES=false
 npm run build
 ```
 
 That build can then be served by the website at `https://www.leadafrik.com/calculator/`, or embedded inside an existing page with an iframe that points at that route.
+
+Key generation example:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Use the generated value for `FFC_API_KEY` on the backend. Only mirror it into `VITE_API_KEY` for a private/internal frontend build with `VITE_ENABLE_SAVED_ANALYSES=true`.
 
 The rent-vs-buy UI now supports on-demand PDF generation and a compact live-assumptions drawer. The browser requests the current default assumption bundle from `GET /v1/rent-vs-buy/assumptions/current`, lets the user override the most material housing assumptions with sliders, sends those overrides into `POST /v1/rent-vs-buy/analyze` and `POST /v1/rent-vs-buy/report`, and renders the PDF locally with React-PDF. If `GROQ_API_KEY` is configured on the backend, the short narrative sections are generated through Groq; otherwise the app falls back to deterministic template text.
 
@@ -138,5 +161,5 @@ Current product shape:
 - `Rent vs Buy`: live end-to-end through the API
 - `Retirement Survival`: live analysis engine
 - `Job Offer & Relocation`: live analysis engine
-- `College vs Retirement`: queued
-- `Debt Payoff vs Invest`: queued
+- `College vs Retirement`: live analysis engine
+- `Debt Payoff vs Invest`: queued (hidden from nav until implemented)

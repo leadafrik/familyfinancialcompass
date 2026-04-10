@@ -368,6 +368,94 @@ class FamilyFinancialCompassService:
             user_inputs=user_inputs,
             system_assumptions=bundle.assumptions,
             analysis=analysis,
+            module="rent_vs_buy",
+            idempotency_key=idempotency_key,
+        )
+        return self.repository.save(scenario, output)
+
+    def create_retirement_survival_scenario(
+        self,
+        user_inputs: RetirementScenarioInput,
+        user_id: str | None = None,
+        seed: int = 7,
+        idempotency_key: str | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> ScenarioBundle:
+        resolved_user_id = user_id or self.default_user_id
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = RetirementSurvivalEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        scenario, output = create_saved_scenario(
+            user_id=resolved_user_id,
+            user_inputs=user_inputs,
+            system_assumptions=bundle.assumptions,
+            analysis=analysis,
+            module="retirement_survival",
+            idempotency_key=idempotency_key,
+        )
+        return self.repository.save(scenario, output)
+
+    def create_job_offer_scenario(
+        self,
+        user_inputs: JobOfferScenarioInput,
+        user_id: str | None = None,
+        seed: int = 7,
+        idempotency_key: str | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> ScenarioBundle:
+        resolved_user_id = user_id or self.default_user_id
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = JobOfferEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        scenario, output = create_saved_scenario(
+            user_id=resolved_user_id,
+            user_inputs=user_inputs,
+            system_assumptions=bundle.assumptions,
+            analysis=analysis,
+            module="job_offer",
+            idempotency_key=idempotency_key,
+        )
+        return self.repository.save(scenario, output)
+
+    def create_college_vs_retirement_scenario(
+        self,
+        user_inputs: CollegeVsRetirementScenarioInput,
+        user_id: str | None = None,
+        seed: int = 7,
+        idempotency_key: str | None = None,
+        assumptions_snapshot: dict | None = None,
+        audit_trail_snapshot: list[dict] | None = None,
+    ) -> ScenarioBundle:
+        resolved_user_id = user_id or self.default_user_id
+        _, bundle = self._resolve_bundle(
+            assumptions_snapshot=assumptions_snapshot,
+            audit_trail_snapshot=audit_trail_snapshot,
+        )
+        analysis = CollegeVsRetirementEngine(bundle.assumptions).analyze(
+            user_inputs,
+            audit_trail=list(bundle.audit_trail),
+            seed=seed,
+        )
+        scenario, output = create_saved_scenario(
+            user_id=resolved_user_id,
+            user_inputs=user_inputs,
+            system_assumptions=bundle.assumptions,
+            analysis=analysis,
+            module="college_vs_retirement",
             idempotency_key=idempotency_key,
         )
         return self.repository.save(scenario, output)
@@ -397,6 +485,7 @@ class FamilyFinancialCompassService:
         return {
             "scenario_id": bundle.scenario.id,
             "user_id": bundle.scenario.user_id,
+            "module": bundle.scenario.module,
             "created_at": bundle.scenario.created_at,
             "computed_at": bundle.output.computed_at,
             "model_version": bundle.scenario.model_version,

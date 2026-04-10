@@ -54,6 +54,7 @@ class AppSettings:
     groq_model: str
     groq_base_url: str
     bls_api_key: str | None = None
+    api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -64,6 +65,22 @@ class AppSettings:
             "FFC_SCENARIO_STORE_BACKEND",
             "postgres" if database_url else "file",
         )
+        # Guards for production deployments.
+        ffc_env = os.getenv("FFC_ENV", "").strip().lower()
+        api_key = os.getenv("FFC_API_KEY") or None
+        if ffc_env == "production":
+            if scenario_store_backend != "postgres":
+                raise RuntimeError(
+                    "FFC_SCENARIO_STORE_BACKEND must be 'postgres' in production. "
+                    "Set FFC_DATABASE_URL and FFC_SCENARIO_STORE_BACKEND=postgres, "
+                    "or set FFC_ENV to a non-production value for local development."
+                )
+            if api_key is None:
+                raise RuntimeError(
+                    "FFC_API_KEY must be set in production. "
+                    "Generate a strong random secret and export it as FFC_API_KEY, "
+                    "or set FFC_ENV to a non-production value for local development."
+                )
         return cls(
             host=os.getenv("FFC_HOST", "0.0.0.0"),
             port=int(os.getenv("FFC_PORT", "8000")),
@@ -83,4 +100,5 @@ class AppSettings:
             groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             groq_base_url=os.getenv("GROQ_API_BASE_URL", "https://api.groq.com/openai/v1/chat/completions"),
             bls_api_key=os.getenv("BLS_API_KEY"),
+            api_key=api_key,
         )

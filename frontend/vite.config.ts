@@ -25,5 +25,21 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    build: {
+      // react-pdf/renderer is ~1.5 MB minified and cannot be reduced further.
+      // It is only loaded on-demand via dynamic import() at PDF generation time
+      // so it does not affect initial page load. Raise the warning threshold to
+      // avoid noise on a chunk we cannot (and do not need to) shrink.
+      chunkSizeWarningLimit: 2000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Isolate the heavy react-pdf bundle so it is only loaded on demand
+            // (dynamic import at PDF generation time, not on initial page load).
+            "pdf-renderer": ["@react-pdf/renderer"],
+          },
+        },
+      },
+    },
   };
 });

@@ -212,7 +212,20 @@ class PostgresScenarioRepository:
 
     def ping(self) -> None:
         with self._pool.connection() as conn:
-            conn.execute("SELECT 1")
+            # Verify both application tables exist so /readyz catches missing migrations.
+            row = conn.execute(
+                """
+                select count(*) from information_schema.tables
+                where table_schema = 'public'
+                  and table_name in ('scenarios', 'scenario_outputs')
+                """
+            ).fetchone()
+            found = int(row[0]) if row else 0
+            if found < 2:
+                raise RuntimeError(
+                    "Database schema is incomplete: 'scenarios' and/or 'scenario_outputs' "
+                    "tables are missing. Run the SQL migrations before serving traffic."
+                )
 
     def close(self) -> None:
         if self._owns_pool:
@@ -257,6 +270,7 @@ class PostgresScenarioRepository:
                     s.assumptions_snapshot,
                     s.model_version,
                     s.idempotency_key,
+                    s.module,
                     o.scenario_id,
                     o.computed_at,
                     o.output_blob
@@ -280,6 +294,7 @@ class PostgresScenarioRepository:
 
     def _upsert_scenario(self, conn: Any, scenario: ScenarioRecord) -> ScenarioRecord:
         market_region = str(scenario.inputs_snapshot.get("market_region", "national"))
+        module = str(scenario.module)
         if scenario.idempotency_key is None:
             row = conn.execute(
                 """
@@ -301,7 +316,7 @@ class PostgresScenarioRepository:
                     scenario.id,
                     scenario.user_id,
                     scenario.created_at,
-                    "rent_vs_buy",
+                    module,
                     market_region,
                     json.dumps(scenario.inputs_snapshot, sort_keys=True),
                     json.dumps(scenario.assumptions_snapshot, sort_keys=True),
@@ -333,7 +348,7 @@ class PostgresScenarioRepository:
                 scenario.id,
                 scenario.user_id,
                 scenario.created_at,
-                "rent_vs_buy",
+                module,
                 market_region,
                 json.dumps(scenario.inputs_snapshot, sort_keys=True),
                 json.dumps(scenario.assumptions_snapshot, sort_keys=True),
@@ -379,6 +394,7 @@ class PostgresScenarioRepository:
                 s.assumptions_snapshot,
                 s.model_version,
                 s.idempotency_key,
+                s.module,
                 o.scenario_id,
                 o.computed_at,
                 o.output_blob
@@ -401,13 +417,14 @@ class PostgresScenarioRepository:
             assumptions_snapshot=_normalize_json(row[4]),
             model_version=str(row[5]),
             idempotency_key=row[6],
+            module=str(row[7]),
         )
 
     def _row_to_output(self, row: Any) -> ScenarioOutputRecord:
         return ScenarioOutputRecord(
-            scenario_id=str(row[7]),
-            computed_at=_normalize_timestamp(row[8]),
-            output_blob=_normalize_json(row[9]),
+            scenario_id=str(row[8]),
+            computed_at=_normalize_timestamp(row[9]),
+            output_blob=_normalize_json(row[10]),
         )
 
     def _row_to_bundle(self, row: Any) -> ScenarioBundle:

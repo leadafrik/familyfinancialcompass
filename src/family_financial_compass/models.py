@@ -507,8 +507,8 @@ class JobOfferScenarioInput:
     def __post_init__(self) -> None:
         if self.comparison_years <= 0:
             raise ValueError("comparison_years must be positive.")
-        if self.comparison_years > 10:
-            raise ValueError("comparison_years must be between 1 and 10.")
+        if self.comparison_years > 20:
+            raise ValueError("comparison_years must be between 1 and 20.")
         if not 0.0 <= self.marginal_tax_rate <= 0.60:
             raise ValueError("marginal_tax_rate must be between 0.0 and 0.60.")
 
@@ -637,6 +637,7 @@ class ScenarioRecord:
     inputs_snapshot: dict
     assumptions_snapshot: dict
     model_version: str
+    module: str = "rent_vs_buy"
     idempotency_key: str | None = None
 
     @property

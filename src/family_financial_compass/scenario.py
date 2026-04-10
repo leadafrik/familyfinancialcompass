@@ -5,7 +5,9 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from .models import RentVsBuyAnalysis, ScenarioOutputRecord, ScenarioRecord, SystemAssumptions, UserScenarioInput
+from typing import Any
+
+from .models import ScenarioOutputRecord, ScenarioRecord, SystemAssumptions
 
 
 def serialize_model(value):
@@ -24,9 +26,10 @@ def serialize_model(value):
 
 def create_saved_scenario(
     user_id: str,
-    user_inputs: UserScenarioInput,
+    user_inputs: Any,
     system_assumptions: SystemAssumptions,
-    analysis: RentVsBuyAnalysis,
+    analysis: Any,
+    module: str = "rent_vs_buy",
     idempotency_key: str | None = None,
 ) -> tuple[ScenarioRecord, ScenarioOutputRecord]:
     scenario_id = str(uuid4())
@@ -39,6 +42,7 @@ def create_saved_scenario(
         inputs_snapshot=serialize_model(user_inputs),
         assumptions_snapshot=serialize_model(system_assumptions),
         model_version=system_assumptions.model_version,
+        module=module,
         idempotency_key=idempotency_key,
     )
     scenario_output = ScenarioOutputRecord(

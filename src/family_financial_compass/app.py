@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 
 from .assumptions import FileAssumptionStore, PostgresAssumptionStore
 from .api_models import (
@@ -12,6 +13,9 @@ from .api_models import (
     AnalyzeRequest,
     CollegeVsRetirementAnalyzeRequest,
     CollegeVsRetirementReportRequest,
+    CreateCollegeVsRetirementScenarioRequest,
+    CreateJobOfferScenarioRequest,
+    CreateRetirementScenarioRequest,
     CreateScenarioRequest,
     CurrentAssumptionsEnvelope,
     HealthEnvelope,
@@ -79,6 +83,22 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         )
     app.state.service = service
     app.state.settings = app_settings
+
+    _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+    def _require_api_key(api_key: str | None = Security(_api_key_header)) -> str:
+        """Validate the X-API-Key header against FFC_API_KEY env var.
+
+        If FFC_API_KEY is not configured the server runs in open mode
+        (safe for local dev; required env var for production deployments).
+        """
+        expected = app_settings.api_key
+        if expected is None:
+            # No key configured — open/dev mode.
+            return "anonymous"
+        if api_key != expected:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+        return api_key
 
     def _process_health_payload() -> HealthEnvelope:
         return HealthEnvelope(
@@ -206,7 +226,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         return ReportEnvelope(**payload)
 
     @app.post("/v1/rent-vs-buy/scenarios", response_model=ScenarioEnvelope)
-    async def create_rent_vs_buy_scenario(request: CreateScenarioRequest) -> ScenarioEnvelope:
+    async def create_rent_vs_buy_scenario(
+        request: CreateScenarioRequest,
+        _key: str = Depends(_require_api_key),
+    ) -> ScenarioEnvelope:
         bundle = service.create_rent_vs_buy_scenario(
             user_inputs=request.input.to_domain(),
             user_id=request.user_id,
@@ -218,10 +241,62 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         )
         return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
 
+    @app.post("/v1/retirement-survival/scenarios", response_model=ScenarioEnvelope)
+    async def create_retirement_survival_scenario(
+        request: CreateRetirementScenarioRequest,
+        _key: str = Depends(_require_api_key),
+    ) -> ScenarioEnvelope:
+        bundle = service.create_retirement_survival_scenario(
+            user_inputs=request.input.to_domain(),
+            user_id=request.user_id,
+            seed=request.simulation_seed,
+            idempotency_key=request.idempotency_key,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
+
+    @app.post("/v1/job-offer/scenarios", response_model=ScenarioEnvelope)
+    async def create_job_offer_scenario(
+        request: CreateJobOfferScenarioRequest,
+        _key: str = Depends(_require_api_key),
+    ) -> ScenarioEnvelope:
+        bundle = service.create_job_offer_scenario(
+            user_inputs=request.input.to_domain(),
+            user_id=request.user_id,
+            seed=request.simulation_seed,
+            idempotency_key=request.idempotency_key,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
+
+    @app.post("/v1/college-vs-retirement/scenarios", response_model=ScenarioEnvelope)
+    async def create_college_vs_retirement_scenario(
+        request: CreateCollegeVsRetirementScenarioRequest,
+        _key: str = Depends(_require_api_key),
+    ) -> ScenarioEnvelope:
+        bundle = service.create_college_vs_retirement_scenario(
+            user_inputs=request.input.to_domain(),
+            user_id=request.user_id,
+            seed=request.simulation_seed,
+            idempotency_key=request.idempotency_key,
+            assumptions_snapshot=request.assumptions_snapshot,
+            audit_trail_snapshot=request.audit_trail_snapshot,
+        )
+        return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
+
     @app.get("/v1/scenarios/{scenario_id}", response_model=ScenarioEnvelope)
-    async def get_scenario(scenario_id: str) -> ScenarioEnvelope:
+    async def get_scenario(
+        scenario_id: str,
+        user_id: str,
+        _key: str = Depends(_require_api_key),
+    ) -> ScenarioEnvelope:
+        """Fetch a scenario by ID. user_id is always required and always enforced.
+        A missing or wrong user_id returns 404 (not 403) to avoid leaking existence.
+        """
         bundle = service.get_scenario(scenario_id)
-        if bundle is None:
+        if bundle is None or bundle.scenario.user_id != user_id:
             raise HTTPException(status_code=404, detail="Scenario not found.")
         return ScenarioEnvelope(**service.serialize_scenario_bundle(bundle))
 
@@ -230,6 +305,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         user_id: str,
         limit: int = app_settings.scenario_list_default_limit,
         cursor: str | None = None,
+        _key: str = Depends(_require_api_key),
     ) -> ScenarioListEnvelope:
         if limit <= 0 or limit > app_settings.scenario_list_max_limit:
             raise HTTPException(

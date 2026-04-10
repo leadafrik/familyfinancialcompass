@@ -627,13 +627,14 @@ export interface CurrentAssumptionsEnvelope {
 export interface ScenarioEnvelope {
   scenario_id: string;
   user_id: string;
+  module: string;
   created_at: string;
   computed_at: string;
   model_version: string;
   disclaimer: string;
   inputs_snapshot: Record<string, unknown>;
   assumptions_snapshot: Record<string, unknown>;
-  analysis: RentVsBuyAnalysis;
+  analysis: Record<string, unknown>;
 }
 
 export interface ScenarioListEnvelope {

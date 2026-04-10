@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic import StrictInt
 
 from .models import (
@@ -27,7 +27,7 @@ class RentVsBuyInputModel(BaseModel):
     target_home_price_cents: StrictInt = Field(gt=0)
     down_payment_cents: StrictInt = Field(ge=0)
     loan_term_years: Literal[15, 20, 30]
-    expected_years_in_home: float = Field(gt=0)
+    expected_years_in_home: float = Field(gt=0, le=50)
     current_monthly_rent_cents: StrictInt = Field(gt=0)
     annual_household_income_cents: StrictInt = Field(gt=0)
     current_savings_cents: StrictInt = Field(ge=0)
@@ -87,7 +87,7 @@ class RetirementInputModel(BaseModel):
     current_portfolio_cents: StrictInt = Field(gt=0)
     annual_spending_cents: StrictInt = Field(ge=0)
     annual_guaranteed_income_cents: StrictInt = Field(default=0, ge=0)
-    retirement_years: StrictInt = Field(default=30, gt=0, le=60)
+    retirement_years: StrictInt = Field(default=30, gt=0, le=50)
     expected_annual_return_rate: float = Field(default=0.06, gt=-1.0, le=1.0)
     risk_profile: RiskProfile = RiskProfile.MODERATE
     loss_behavior: LossBehavior = LossBehavior.HOLD
@@ -139,7 +139,7 @@ class JobOfferAnalyzeInputModel(BaseModel):
 
     offer_a: JobOfferModel
     offer_b: JobOfferModel
-    comparison_years: StrictInt = Field(default=4, gt=0)
+    comparison_years: StrictInt = Field(default=4, gt=0, le=20)
     marginal_tax_rate: float = Field(default=0.24, ge=0.0, le=0.60)
     local_market_concentration: bool = False
 
@@ -179,12 +179,21 @@ class CollegeVsRetirementInputModel(BaseModel):
     current_college_savings_cents: StrictInt = Field(default=0, ge=0)
     annual_savings_budget_cents: StrictInt = Field(default=0, ge=0)
     annual_college_cost_cents: StrictInt = Field(gt=0)
-    years_until_college: StrictInt = Field(ge=0)
+    years_until_college: StrictInt = Field(ge=0, le=25)
     years_in_college: StrictInt = Field(default=4, gt=0)
-    retirement_years: StrictInt = Field(default=18, gt=0)
+    retirement_years: StrictInt = Field(default=18, gt=0, le=50)
     expected_annual_return_rate: float = Field(default=0.06, gt=-1.0, le=1.0)
     risk_profile: RiskProfile = RiskProfile.MODERATE
     loss_behavior: LossBehavior = LossBehavior.HOLD
+
+    @model_validator(mode="after")
+    def _require_nonzero_savings(self) -> "CollegeVsRetirementInputModel":
+        if self.current_retirement_savings_cents == 0 and self.annual_savings_budget_cents == 0:
+            raise ValueError(
+                "At least one of current_retirement_savings_cents or annual_savings_budget_cents "
+                "must be greater than 0. Without any savings, the comparison is undefined."
+            )
+        return self
 
     def to_domain(self) -> CollegeVsRetirementScenarioInput:
         return CollegeVsRetirementScenarioInput(**self.model_dump())
@@ -208,6 +217,27 @@ class CollegeVsRetirementReportRequest(BaseModel):
     audit_trail_snapshot: list[dict[str, Any]] | None = None
 
 
+class CreateRetirementScenarioRequest(RetirementAnalyzeRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class CreateJobOfferScenarioRequest(JobOfferAnalyzeRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class CreateCollegeVsRetirementScenarioRequest(CollegeVsRetirementAnalyzeRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class AnalysisEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -229,6 +259,7 @@ class ScenarioEnvelope(BaseModel):
 
     scenario_id: str
     user_id: str
+    module: str
     created_at: str
     computed_at: str
     model_version: str
