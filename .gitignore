@@ -4,6 +4,7 @@ __pycache__/
 pytest-cache-files-*/
 .tmp/
 .env
+frontend/.env
 data/scenarios/
 data/test-runs/
 src/family_financial_compass.egg-info/
